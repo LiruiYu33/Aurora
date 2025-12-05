@@ -1,16 +1,20 @@
 {
   "expo": {
-    "name": "MyExpoProject",
-    "slug": "MyExpoProject",
+    "name": "Aurora",
+    "slug": "Aurora",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "myexpoproject",
+    "scheme": "aurora",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "jsEngine": "hermes",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.anonymous.MyExpoProject"
+      "bundleIdentifier": "com.aaronyu.Aurora",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -21,7 +25,7 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.anonymous.MyExpoProject"
+      "package": "com.anonymous.Aurora"
     },
     "web": {
       "output": "static",
@@ -45,6 +49,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "05508495-d352-47e7-87b8-f9866d6177a5"
+      }
     }
   }
 }
