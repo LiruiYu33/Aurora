@@ -16,9 +16,11 @@
             background: linear-gradient(135deg, #fefeff 0%, #ffffff 100%);
             min-height: 100vh;
             display: flex;
+            flex-direction: column;
             align-items: center;
             justify-content: center;
-            padding: 12px;
+            padding: max(12px, env(safe-area-inset-left)) max(12px, env(safe-area-inset-right)) 12px max(12px, env(safe-area-inset-left));
+            padding-top: calc(max(12px, env(safe-area-inset-top)));
         }
         
         .container {
@@ -57,7 +59,7 @@
             grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
             gap: 12px;
             width: 100%;
-            margin: 0 auto;
+            margin: 0 auto 24px;
         }
         
         .link-card {
@@ -69,6 +71,8 @@
             color: #333;
             transition: all 0.3s;
             border: 1px solid rgba(0, 0, 0, 0.1);
+            position: relative;
+            cursor: pointer;
         }
         
         .link-card:hover {
@@ -84,6 +88,97 @@
         .link-card .name {
             font-size: 13px;
             font-weight: 500;
+        }
+        
+        .link-card .delete-btn {
+            position: absolute;
+            top: 4px;
+            right: 4px;
+            width: 20px;
+            height: 20px;
+            background: rgba(255, 0, 0, 0.7);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            font-size: 12px;
+            cursor: pointer;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        
+        .link-card:hover .delete-btn {
+            display: flex;
+            opacity: 1;
+        }
+        
+        .add-link-section {
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-bottom: 12px;
+        }
+        
+        .add-link-inputs {
+            display: grid;
+            grid-template-columns: 1fr 1fr auto;
+            gap: 6px;
+            width: 100%;
+            align-items: center;
+        }
+        
+        .add-link-inputs input {
+            padding: 8px 10px;
+            border: 1px solid rgba(0, 0, 0, 0.1);
+            border-radius: 6px;
+            font-size: 12px;
+            font-family: inherit;
+            background: rgba(0, 0, 0, 0.02);
+            min-width: 0;
+        }
+        
+        .add-link-inputs button {
+            padding: 8px 14px;
+            background: #2563eb;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+            white-space: nowrap;
+        }
+        
+        .add-link-inputs button:hover {
+            background: #1d4ed8;
+        }
+        
+        .bg-button-section {
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        
+        .bg-button {
+            padding: 6px 12px;
+            background: rgba(100, 100, 100, 0.6);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .bg-button:hover {
+            background: rgba(80, 80, 80, 0.8);
         }
         
         @media (prefers-color-scheme: dark) {
@@ -104,6 +199,16 @@
             .link-card:hover {
                 background: rgba(255, 255, 255, 0.25);
             }
+            
+            .add-link-inputs input {
+                background: rgba(255, 255, 255, 0.1);
+                border: 1px solid rgba(255, 255, 255, 0.2);
+                color: white;
+            }
+            
+            .add-link-inputs input::placeholder {
+                color: rgba(255, 255, 255, 0.6);
+            }
         }
     </style>
 </head>
@@ -113,24 +218,143 @@
         <h1>欢迎使用浏览器</h1>
         <p>快捷开启研究、收藏灵感或输入地址开始浏览</p>
         
-        <div class="quick-links">
-            <a href="https://www.google.com" class="link-card">
-                <div class="icon">🔍</div>
-                <div class="name">Google</div>
-            </a>
-            <a href="https://www.ithome.com" class="link-card">
-                <div class="icon">📰</div>
-                <div class="name">IT之家</div>
-            </a>
-            <a href="https://www.apple.com" class="link-card">
-                <div class="icon">🍎</div>
-                <div class="name">Apple</div>
-            </a>
-            <a href="https://github.com" class="link-card">
-                <div class="icon">💻</div>
-                <div class="name">GitHub</div>
-            </a>
+        <div class="add-link-section">
+            <div class="add-link-inputs">
+                <input type="text" id="linkName" placeholder="快捷名称" maxlength="12">
+                <input type="text" id="linkUrl" placeholder="网址">
+                <button id="addBtn">添加</button>
+            </div>
         </div>
+        
+        <div class="bg-button-section">
+            <button class="bg-button" id="bgSelectBtn">🖼️ 选择背景</button>
+            <button class="bg-button" id="bgResetBtn">🔄 重置背景</button>
+        </div>
+        
+        <div class="quick-links" id="quickLinks"></div>
     </div>
+
+    <script>
+        // 初始化快捷链接列表
+        function renderLinks(links) {
+            const container = document.getElementById('quickLinks');
+            container.innerHTML = '';
+            
+            links.forEach((link, index) => {
+                const card = document.createElement('a');
+                card.href = link.url;
+                card.className = 'link-card';
+                card.innerHTML = `
+                    <div class="icon">${link.icon || '🔗'}</div>
+                    <div class="name">${link.label}</div>
+                    <button class="delete-btn" data-index="${index}">×</button>
+                `;
+                
+                // 删除按钮事件
+                const deleteBtn = card.querySelector('.delete-btn');
+                deleteBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (window.ReactNativeWebView) {
+                        window.ReactNativeWebView.postMessage(JSON.stringify({
+                            type: 'deleteQuickLink',
+                            index: index
+                        }));
+                    }
+                });
+                
+                container.appendChild(card);
+            });
+        }
+        
+        // 添加快捷链接
+        document.getElementById('addBtn').addEventListener('click', () => {
+            const name = document.getElementById('linkName').value.trim();
+            const url = document.getElementById('linkUrl').value.trim();
+            
+            if (!name || !url) {
+                alert('请输入名称和网址');
+                return;
+            }
+            
+            if (window.ReactNativeWebView) {
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                    type: 'addQuickLink',
+                    label: name,
+                    url: url
+                }));
+                
+                // 清空输入框
+                document.getElementById('linkName').value = '';
+                document.getElementById('linkUrl').value = '';
+                document.getElementById('linkName').focus();
+                
+                // 立即请求更新快捷链接列表
+                setTimeout(() => {
+                    window.ReactNativeWebView.postMessage(JSON.stringify({
+                        type: 'requestQuickLinks'
+                    }));
+                }, 100);
+            }
+        });
+        
+        // 监听回车键
+        document.getElementById('linkUrl').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                document.getElementById('addBtn').click();
+            }
+        });
+        
+        // 选择背景图片
+        document.getElementById('bgSelectBtn').addEventListener('click', () => {
+            if (window.ReactNativeWebView) {
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                    type: 'selectBackgroundImage'
+                }));
+            }
+        });
+        
+        // 重置背景
+        document.getElementById('bgResetBtn').addEventListener('click', () => {
+            if (window.ReactNativeWebView) {
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                    type: 'resetBackground'
+                }));
+            }
+            // 恢复默认背景渐变
+            document.body.style.backgroundImage = 'none';
+            document.body.style.background = 'linear-gradient(135deg, #fefeff 0%, #ffffff 100%)';
+        });
+        
+        // 接收来自 React Native 的背景图片 URI
+        window.setBackgroundImage = function(imageUri) {
+            if (imageUri) {
+                // 设置背景图片
+                document.body.style.background = `url(${imageUri})`;
+                document.body.style.backgroundSize = 'cover';
+                document.body.style.backgroundPosition = 'center';
+                document.body.style.backgroundAttachment = 'fixed';
+            } else {
+                // 恢复默认背景
+                document.body.style.backgroundImage = 'none';
+                document.body.style.background = 'linear-gradient(135deg, #fefeff 0%, #ffffff 100%)';
+            }
+        };
+        
+        // 接收来自 React Native 的快捷链接数据
+        window.setQuickLinks = function(links) {
+            renderLinks(links);
+        };
+        
+        // 页面加载完成后请求快捷链接数据和背景图片
+        if (window.ReactNativeWebView) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'requestQuickLinks'
+            }));
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'requestBackgroundImage'
+            }));
+        }
+    </script>
 </body>
 </html>

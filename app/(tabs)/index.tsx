@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Asset } from 'expo-asset';
 import { BlurView } from 'expo-blur';
+import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -42,6 +43,7 @@ type BrowserTab = {
 type QuickLink = {
   label: string;
   url: string;
+  icon?: string;
 };
 
 // ==================== 常量配置 ====================
@@ -62,9 +64,9 @@ const createTab = (): BrowserTab => ({
 
 // 预设的快捷链接列表（这些是默认显示的）
 const defaultQuickLinks: QuickLink[] = [
-  { label: 'IT之家', url: 'https://www.ithome.com/' },
-  { label: 'Google', url: 'https://www.google.com/' },
-  { label: 'Apple', url: 'https://www.apple.com/' },
+  { label: 'IT之家', url: 'https://www.ithome.com/', icon: '📰' },
+  { label: 'Google', url: 'https://www.google.com/', icon: '🔍' },
+  { label: 'Apple', url: 'https://www.apple.com/', icon: '🍎' },
 ];
 
 // RSS 新闻源地址
@@ -80,6 +82,8 @@ type RssNewsItem = {
 const QUICK_LINK_STORAGE_KEY = 'browser.customQuickLinks.v1';
 // AsyncStorage 的存储键名，用于保存用户收藏夹
 const BOOKMARKS_STORAGE_KEY = 'browser.bookmarks.v1';
+// AsyncStorage 的存储键名，用于保存启动页背景图片 URI
+const START_PAGE_BG_STORAGE_KEY = 'browser.startPageBgImage.v1';
 
 // 收藏夹项目类型
 type BookmarkItem = {
@@ -178,6 +182,9 @@ export default function SimpleBrowser() {
   // customQuickLinks: 用户自定义的快捷链接数组
   const [customQuickLinks, setCustomQuickLinks] = useState<QuickLink[]>([]);
   
+  // startPageBgImage: 启动页背景图片 URI
+  const [startPageBgImage, setStartPageBgImage] = useState<string | null>(null);
+  
   // rssNews: 从 RSS 拉取的新闻列表
   const [rssNews, setRssNews] = useState<RssNewsItem[]>([]);
   // isLoadingRss: RSS 是否正在加载
@@ -190,7 +197,7 @@ export default function SimpleBrowser() {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
 
-  // 加载启动页资源
+  // 加载启动页资源和背景图片
   useEffect(() => {
     const loadStartPage = async () => {
       try {
@@ -201,7 +208,20 @@ export default function SimpleBrowser() {
         console.warn('Failed to load start page asset', e);
       }
     };
+    
+    const loadBackgroundImage = async () => {
+      try {
+        const bgImage = await AsyncStorage.getItem(START_PAGE_BG_STORAGE_KEY);
+        if (bgImage) {
+          setStartPageBgImage(bgImage);
+        }
+      } catch (e) {
+        console.warn('Failed to load background image', e);
+      }
+    };
+    
     loadStartPage();
+    loadBackgroundImage();
   }, []);
 
   // ==================== 派生状态（计算值） ====================
@@ -230,6 +250,11 @@ export default function SimpleBrowser() {
   const [isNavBarVisible, setIsNavBarVisible] = useState(true);
   // 导航栏位移动画值
   const navBarTranslateY = useRef(new Animated.Value(0)).current;
+  // WebView 容器淡入淡出动画
+  const webViewOpacity = useRef(new Animated.Value(1)).current;
+  // 标签页切换缩放和淡入淡出
+  const tabSwitchScale = useRef(new Animated.Value(1)).current;
+  const tabSwitchOpacity = useRef(new Animated.Value(1)).current;
   
   // ==================== 收藏夹状态 ====================
   // 收藏夹列表
@@ -324,6 +349,70 @@ export default function SimpleBrowser() {
     
     // 异步保存到本地存储
     await persistCustomQuickLinks(next);
+  };
+
+  // ==================== 启动页背景图片管理函数 ====================
+  
+  /**
+   * 选择背景图片
+   */
+  const handleSelectBackgroundImage = async () => {
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        alert('需要相册权限才能选择背景图片');
+        return;
+      }
+      
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: false,
+        aspect: [9, 16],
+        quality: 0.8,
+      });
+      
+      if (!result.canceled) {
+        const imageUri = result.assets[0].uri;
+        setStartPageBgImage(imageUri);
+        
+        // 保存到本地存储
+        try {
+          await AsyncStorage.setItem(START_PAGE_BG_STORAGE_KEY, imageUri);
+          
+          // 立即刷新页面显示背景
+          setTimeout(() => {
+            webViewRef.current?.injectJavaScript(`
+              window.setBackgroundImage('${imageUri}');
+              true;
+            `);
+          }, 100);
+        } catch (e) {
+          console.warn('Failed to save background image', e);
+        }
+      }
+    } catch (e) {
+      console.warn('Error selecting background image', e);
+    }
+  };
+  
+  /**
+   * 重置背景图片
+   */
+  const handleResetBackground = async () => {
+    setStartPageBgImage(null);
+    try {
+      await AsyncStorage.removeItem(START_PAGE_BG_STORAGE_KEY);
+      
+      // 立即刷新页面恢复默认背景
+      setTimeout(() => {
+        webViewRef.current?.injectJavaScript(`
+          window.setBackgroundImage('');
+          true;
+        `);
+      }, 100);
+    } catch (e) {
+      console.warn('Failed to reset background image', e);
+    }
   };
 
   // ==================== 收藏夹管理函数 ====================
@@ -517,6 +606,13 @@ export default function SimpleBrowser() {
     // 格式化输入为完整 URL
     const target = formatInput(activeTab.input);
     
+    // 导航前淡出动画
+    Animated.timing(webViewOpacity, {
+      toValue: 0.6,
+      duration: 100,
+      useNativeDriver: true,
+    }).start();
+    
     // 更新标签页：设置 url、input，并标记为非启动页
     updateTab(activeTab.id, { url: target, input: target, isStartPage: false });
   };
@@ -540,6 +636,13 @@ export default function SimpleBrowser() {
     if (!activeTab) {
       return;
     }
+    
+    // 点击快捷链接时的淡出淡入动画
+    Animated.timing(webViewOpacity, {
+      toValue: 0.4,
+      duration: 100,
+      useNativeDriver: true,
+    }).start();
     
     // 格式化地址
     const target = formatInput(rawValue);
@@ -572,6 +675,19 @@ export default function SimpleBrowser() {
     if (activeTab.isStartPage) {
       return;
     }
+    
+    // 后退时的过渡动画
+    Animated.timing(webViewOpacity, {
+      toValue: 0.5,
+      duration: 150,
+      useNativeDriver: true,
+    }).start(() => {
+      Animated.timing(webViewOpacity, {
+        toValue: 1,
+        duration: 200,
+        useNativeDriver: true,
+      }).start();
+    });
     
     // 如果 WebView 可以后退，且当前不在启动页（通过 URL 判断）
     if (canGoBack && activeTab.url !== startPageUrl && activeTab.url !== START_PAGE_MARKER) {
@@ -665,6 +781,33 @@ export default function SimpleBrowser() {
    */
   const scrollListenerJS = `
     (function() {
+      // 添加 CSS 让内容能穿过顶部安全区域，并用网页背景色填充
+      const style = document.createElement('style');
+      style.textContent = \`
+        html {
+          padding-top: 0 !important;
+          background-color: inherit;
+        }
+        body {
+          padding-top: 0 !important;
+          margin-top: 0 !important;
+          background-color: inherit;
+        }
+      \`;
+      document.head.appendChild(style);
+      
+      // 获取网页背景色并应用到安全区域
+      const updateBackgroundColor = () => {
+        const bodyStyle = window.getComputedStyle(document.body);
+        const bgColor = bodyStyle.backgroundColor;
+        if (bgColor && bgColor !== 'rgba(0, 0, 0, 0)') {
+          document.documentElement.style.backgroundColor = bgColor;
+        }
+      };
+      
+      updateBackgroundColor();
+      window.addEventListener('load', updateBackgroundColor);
+      
       let lastScrollY = 0;
       let ticking = false;
       
@@ -693,11 +836,12 @@ export default function SimpleBrowser() {
   `;
 
   /**
-   * 处理 WebView 发送的消息（滚动事件）
+   * 处理 WebView 发送的消息（滚动事件、启动页事件）
    */
   const handleWebViewMessage = (event: { nativeEvent: { data: string } }) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
+      
       if (data.type === 'scroll') {
         if (data.direction === 'down' && data.scrollY > 50) {
           // 向下滚动且不在顶部，隐藏导航栏
@@ -706,6 +850,59 @@ export default function SimpleBrowser() {
           // 向上滚动，显示导航栏
           showNavBar();
         }
+      } else if (data.type === 'requestQuickLinks') {
+        // 启动页请求快捷链接数据
+        const linksToSend = combinedQuickLinks.map(link => ({
+          label: link.label,
+          url: link.url,
+          icon: link.icon || '🔗'
+        }));
+        
+        // 通过 evaluateJavaScript 发送数据到页面
+        webViewRef.current?.injectJavaScript(`
+          window.setQuickLinks(${JSON.stringify(linksToSend)});
+          true;
+        `);
+      } else if (data.type === 'addQuickLink') {
+        // 启动页添加快捷链接
+        handleAddQuickLink(data.label, data.url);
+      } else if (data.type === 'deleteQuickLink') {
+        // 启动页删除快捷链接
+        const index = data.index;
+        const defaultLinksCount = defaultQuickLinks.length;
+        
+        if (index >= defaultLinksCount) {
+          // 删除的是自定义链接
+          const customIndex = index - defaultLinksCount;
+          const next = customQuickLinks.filter((_, i) => i !== customIndex);
+          setCustomQuickLinks(next);
+          persistCustomQuickLinks(next);
+          
+          // 刷新页面显示
+          const linksToSend = [...defaultQuickLinks, ...next].map(link => ({
+            label: link.label,
+            url: link.url,
+            icon: link.icon || '🔗'
+          }));
+          
+          webViewRef.current?.injectJavaScript(`
+            window.setQuickLinks(${JSON.stringify(linksToSend)});
+            true;
+          `);
+        }
+      } else if (data.type === 'selectBackgroundImage') {
+        // 启动页选择背景图片
+        handleSelectBackgroundImage();
+      } else if (data.type === 'resetBackground') {
+        // 启动页重置背景图片
+        handleResetBackground();
+      } else if (data.type === 'requestBackgroundImage') {
+        // 启动页请求背景图片
+        const bgImageUri = startPageBgImage || '';
+        webViewRef.current?.injectJavaScript(`
+          window.setBackgroundImage('${bgImageUri}');
+          true;
+        `);
       }
     } catch (e) {
       // 忽略非 JSON 消息
@@ -719,9 +916,38 @@ export default function SimpleBrowser() {
   const handleSelectTab = async (tabId: string) => {
     // 切换前先截图当前标签页
     await captureCurrentTabSnapshot();
-    setActiveTabId(tabId);            // 激活标签页
-    setSwitcherVisible(false);        // 关闭切换器
-    // 不重置前进/后退状态，保持每个标签页各自的导航历史
+    
+    // 标签页切换动画：缩小并淡出
+    Animated.parallel([
+      Animated.timing(tabSwitchScale, {
+        toValue: 0.95,
+        duration: 150,
+        useNativeDriver: true,
+      }),
+      Animated.timing(tabSwitchOpacity, {
+        toValue: 0.3,
+        duration: 150,
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      // 动画中期：切换标签页
+      setActiveTabId(tabId);
+      setSwitcherVisible(false);
+      
+      // 标签页切换动画：恢复并淡入
+      Animated.parallel([
+        Animated.timing(tabSwitchScale, {
+          toValue: 1,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+        Animated.timing(tabSwitchOpacity, {
+          toValue: 1,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    });
   };
 
   const renderBottomDock = () => (
@@ -806,9 +1032,16 @@ export default function SimpleBrowser() {
   // ==================== 主组件渲染 ====================
   return (
     // View 容器，占满屏幕，让 WebView 延伸到状态栏区域
-    <View style={styles.fullScreen}>
-      {/* WebView 容器（占据主要空间） */}
-      <View style={styles.webViewWrapper}>
+    <View style={[styles.fullScreen, { backgroundColor: isDark ? '#000' : '#fff' }]}>
+      {/* WebView 容器（占据主要空间） - 带标签页切换动画 */}
+      <Animated.View style={[
+        styles.webViewWrapper, 
+        { 
+          backgroundColor: isDark ? '#000' : '#fff',
+          transform: [{ scale: tabSwitchScale }],
+          opacity: tabSwitchOpacity,
+        }
+      ]}>
         {/* 为每个标签页渲染独立的WebView，通过显示/隐藏控制，避免切换时重新加载 */}
         {tabs.map((tab) => {
           const isActive = tab.id === activeTabId;
@@ -818,14 +1051,16 @@ export default function SimpleBrowser() {
             : { uri: tab.url === START_PAGE_MARKER ? (startPageUrl || 'about:blank') : tab.url };
 
           return (
-            <View
+            <Animated.View
               key={tab.id}
               ref={(ref) => { webViewWrapperRefs.current[tab.id] = ref; }}
               style={[
                   // 所有WebView包装器使用绝对定位铺满容器
                   { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
                   // 只显示活跃标签，非活跃标签隐藏但保持挂载以保留状态
-                  tab.id === activeTabId ? { opacity: 1, zIndex: 1 } : { opacity: 0, zIndex: 0 },
+                  tab.id === activeTabId 
+                    ? { opacity: webViewOpacity, zIndex: 1 } 
+                    : { opacity: 0, zIndex: 0 },
               ]}
               pointerEvents={tab.id === activeTabId ? 'auto' : 'none'}
               collapsable={false}
@@ -840,7 +1075,17 @@ export default function SimpleBrowser() {
                 style={styles.webView}
                 onNavigationStateChange={isActive ? handleNavChange : undefined}
                 onLoadStart={() => isActive && setIsLoading(true)}
-                onLoadEnd={() => isActive && setIsLoading(false)}
+                onLoadEnd={() => {
+                  if (isActive) {
+                    setIsLoading(false);
+                    // 页面加载完成，淡入动画
+                    Animated.timing(webViewOpacity, {
+                      toValue: 1,
+                      duration: 300,
+                      useNativeDriver: true,
+                    }).start();
+                  }
+                }}
                 allowsBackForwardNavigationGestures={true}
                 allowsInlineMediaPlayback={true}
                 injectedJavaScript={scrollListenerJS}
@@ -850,7 +1095,7 @@ export default function SimpleBrowser() {
                 allowFileAccess={true}
                 allowUniversalAccessFromFileURLs={true}
               />
-            </View>
+            </Animated.View>
           );
         })}
         
@@ -876,7 +1121,7 @@ export default function SimpleBrowser() {
             <ThemedText style={styles.loaderText}>加载中…</ThemedText>
           </View>
         ) : null}
-      </View>
+      </Animated.View>
 
       {/* 底部工具栏（地址栏 + 按钮），原生可用时使用 LiquidGlassView，否则回落到 BlurView */}
       {renderBottomDock()}
