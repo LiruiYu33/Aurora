@@ -1,112 +1,279 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { useMemo, useState } from 'react';
+import { Alert, Pressable, ScrollView, StyleSheet, Switch, View } from 'react-native';
 
-import { Collapsible } from '@/components/ui/collapsible';
-import { ExternalLink } from '@/components/external-link';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { IconSymbol } from '@/components/ui/icon-symbol';
-import { Fonts } from '@/constants/theme';
 
-export default function TabTwoScreen() {
+const insightStacks = [
+  {
+    title: 'Focus Sprint',
+    description: '25-minute deep work block. Preload 3 tabs, mute pings, surface one brief.',
+    checklist: ['Launch Nimbus Home', 'Queue AI Brief', 'Enable reader filter'],
+    accent: '#f472b6',
+  },
+  {
+    title: 'Exploration Jam',
+    description: 'Open inspiration feeds, pin sketches, and create a scrap stack.',
+    checklist: ['Behance inspiration', 'Pinterest board', 'Open Miro scratch'],
+    accent: '#38bdf8',
+  },
+  {
+    title: 'Ship Review',
+    description: 'Load analytics, Notion timeline, and release checklist for review.',
+    checklist: ['Growth dashboard', 'Retro template', 'Launch tweet draft'],
+    accent: '#a3e635',
+  },
+];
+
+const automationIdeas = [
+  {
+    title: 'Morning brief',
+    detail: '7am push summary sourced from three saved queries and calendar events.',
+  },
+  {
+    title: 'Context link copy',
+    detail: 'Whenever you copy a URL, auto-append a summary sentence.',
+  },
+  {
+    title: 'Zen tab',
+    detail: 'Detect Slack keyword “focus” and collapse all media-heavy tabs.',
+  },
+];
+
+const toggleDefaults: Record<string, boolean> = {
+  reader: true,
+  analytics: false,
+  offline: true,
+};
+
+export default function AdvisoryScreen() {
+  const [toggles, setToggles] = useState(toggleDefaults);
+
+  const activeCount = useMemo(() => Object.values(toggles).filter(Boolean).length, [toggles]);
+
+  const handleToggle = (key: string) => {
+    setToggles((prev) => ({
+      ...prev,
+      [key]: !prev[key],
+    }));
+  };
+
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#D0D0D0', dark: '#353636' }}
-      headerImage={
-        <IconSymbol
-          size={310}
-          color="#808080"
-          name="chevron.left.forwardslash.chevron.right"
-          style={styles.headerImage}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText
-          type="title"
-          style={{
-            fontFamily: Fonts.rounded,
-          }}>
-          Explore
+    <ScrollView contentContainerStyle={styles.container}>
+      <ThemedText type="title">Advisory deck</ThemedText>
+      <ThemedText style={styles.description}>
+        Curated rituals, automations, and guardrails to help your React Native browser concept feel
+        intentional on every platform.
+      </ThemedText>
+
+      <ThemedView style={styles.summaryCard}>
+        <ThemedText type="subtitle">Session builder</ThemedText>
+        <ThemedText style={styles.summaryCopy}>
+          {activeCount} / {Object.keys(toggleDefaults).length} rituals enabled.
         </ThemedText>
+        <View style={styles.toggleRow}>
+          <ToggleRow
+            label="Reader mode"
+            detail="Auto declutter newsletters and research notes"
+            value={toggles.reader}
+            onToggle={() => handleToggle('reader')}
+          />
+          <ToggleRow
+            label="Telemetry"
+            detail="Collect minimal analytics for UX decisions"
+            value={toggles.analytics}
+            onToggle={() => handleToggle('analytics')}
+          />
+          <ToggleRow
+            label="Offline sync"
+            detail="Cache saved reads before takeoff"
+            value={toggles.offline}
+            onToggle={() => handleToggle('offline')}
+          />
+        </View>
       </ThemedView>
-      <ThemedText>This app includes example code to help you get started.</ThemedText>
-      <Collapsible title="File-based routing">
-        <ThemedText>
-          This app has two screens:{' '}
-          <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> and{' '}
-          <ThemedText type="defaultSemiBold">app/(tabs)/explore.tsx</ThemedText>
-        </ThemedText>
-        <ThemedText>
-          The layout file in <ThemedText type="defaultSemiBold">app/(tabs)/_layout.tsx</ThemedText>{' '}
-          sets up the tab navigator.
-        </ThemedText>
-        <ExternalLink href="https://docs.expo.dev/router/introduction">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Android, iOS, and web support">
-        <ThemedText>
-          You can open this project on Android, iOS, and the web. To open the web version, press{' '}
-          <ThemedText type="defaultSemiBold">w</ThemedText> in the terminal running this project.
-        </ThemedText>
-      </Collapsible>
-      <Collapsible title="Images">
-        <ThemedText>
-          For static images, you can use the <ThemedText type="defaultSemiBold">@2x</ThemedText> and{' '}
-          <ThemedText type="defaultSemiBold">@3x</ThemedText> suffixes to provide files for
-          different screen densities
-        </ThemedText>
-        <Image
-          source={require('@/assets/images/react-logo.png')}
-          style={{ width: 100, height: 100, alignSelf: 'center' }}
-        />
-        <ExternalLink href="https://reactnative.dev/docs/images">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Light and dark mode components">
-        <ThemedText>
-          This template has light and dark mode support. The{' '}
-          <ThemedText type="defaultSemiBold">useColorScheme()</ThemedText> hook lets you inspect
-          what the user&apos;s current color scheme is, and so you can adjust UI colors accordingly.
-        </ThemedText>
-        <ExternalLink href="https://docs.expo.dev/develop/user-interface/color-themes/">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Animations">
-        <ThemedText>
-          This template includes an example of an animated component. The{' '}
-          <ThemedText type="defaultSemiBold">components/HelloWave.tsx</ThemedText> component uses
-          the powerful{' '}
-          <ThemedText type="defaultSemiBold" style={{ fontFamily: Fonts.mono }}>
-            react-native-reanimated
-          </ThemedText>{' '}
-          library to create a waving hand animation.
-        </ThemedText>
-        {Platform.select({
-          ios: (
-            <ThemedText>
-              The <ThemedText type="defaultSemiBold">components/ParallaxScrollView.tsx</ThemedText>{' '}
-              component provides a parallax effect for the header image.
-            </ThemedText>
-          ),
-        })}
-      </Collapsible>
-    </ParallaxScrollView>
+
+      <View style={styles.sectionHeader}>
+        <ThemedText type="subtitle">Suggested stacks</ThemedText>
+        <ThemedText style={styles.sectionLabel}>Tap a card to send to the browser tab.</ThemedText>
+      </View>
+
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.cardRow}
+        snapToAlignment="start"
+        decelerationRate="fast">
+        {insightStacks.map((stack) => (
+          <Pressable
+            key={stack.title}
+            style={[styles.stackCard, { borderColor: stack.accent }]}
+            onPress={() =>
+              Alert.alert('Stack queued', `${stack.title} pushed to Nimbus for the next session.`)
+            }>
+            <View style={[styles.stackAccent, { backgroundColor: stack.accent }]} />
+            <View style={styles.stackBody}>
+              <ThemedText type="subtitle">{stack.title}</ThemedText>
+              <ThemedText style={styles.stackDescription}>{stack.description}</ThemedText>
+              {stack.checklist.map((item) => (
+                <View key={item} style={styles.checkRow}>
+                  <Ionicons name="checkmark-circle" size={16} color={stack.accent} />
+                  <ThemedText style={styles.checkText}>{item}</ThemedText>
+                </View>
+              ))}
+            </View>
+          </Pressable>
+        ))}
+      </ScrollView>
+
+      <View style={styles.sectionHeader}>
+        <ThemedText type="subtitle">Automation ideas</ThemedText>
+        <ThemedText style={styles.sectionLabel}>Mini roadmap for future builds.</ThemedText>
+      </View>
+
+      <ThemedView style={styles.automationList}>
+        {automationIdeas.map((idea) => (
+          <View key={idea.title} style={styles.ideaRow}>
+            <View style={styles.ideaCopy}>
+              <ThemedText type="defaultSemiBold">{idea.title}</ThemedText>
+              <ThemedText style={styles.ideaDetail}>{idea.detail}</ThemedText>
+            </View>
+            <Pressable
+              style={styles.ideaButton}
+              onPress={() =>
+                Alert.alert('Draft created', 'Automation added to the prototype backlog.')
+              }>
+              <ThemedText style={styles.ideaButtonText}>Draft</ThemedText>
+            </Pressable>
+          </View>
+        ))}
+      </ThemedView>
+    </ScrollView>
+  );
+}
+
+type ToggleRowProps = {
+  label: string;
+  detail: string;
+  value: boolean;
+  onToggle: () => void;
+};
+
+function ToggleRow({ label, detail, value, onToggle }: ToggleRowProps) {
+  return (
+    <View style={styles.toggleItem}>
+      <View style={{ flex: 1 }}>
+        <ThemedText type="defaultSemiBold">{label}</ThemedText>
+        <ThemedText style={styles.toggleDetail}>{detail}</ThemedText>
+      </View>
+      <Switch value={value} onValueChange={onToggle} />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  headerImage: {
-    color: '#808080',
-    bottom: -90,
-    left: -35,
-    position: 'absolute',
+  container: {
+    padding: 24,
+    gap: 20,
   },
-  titleContainer: {
+  description: {
+    fontSize: 15,
+    color: '#475569',
+  },
+  summaryCard: {
+    padding: 20,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: '#c7d2fe',
+    gap: 16,
+  },
+  summaryCopy: {
+    fontSize: 16,
+    color: '#4338ca',
+  },
+  toggleRow: {
+    gap: 16,
+  },
+  toggleItem: {
     flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  toggleDetail: {
+    fontSize: 13,
+    color: '#475569',
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  sectionLabel: {
+    fontSize: 12,
+    color: '#94a3b8',
+  },
+  cardRow: {
+    gap: 16,
+  },
+  stackCard: {
+    width: 280,
+    borderRadius: 24,
+    borderWidth: 1,
+    flexDirection: 'row',
+    padding: 16,
+    gap: 12,
+  },
+  stackAccent: {
+    width: 6,
+    borderRadius: 999,
+  },
+  stackBody: {
+    flex: 1,
     gap: 8,
+  },
+  stackDescription: {
+    fontSize: 14,
+    color: '#475569',
+  },
+  checkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  checkText: {
+    fontSize: 13,
+  },
+  automationList: {
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  ideaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+  },
+  ideaCopy: {
+    flex: 1,
+    gap: 4,
+  },
+  ideaDetail: {
+    fontSize: 13,
+    color: '#475569',
+  },
+  ideaButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: '#111827',
+  },
+  ideaButtonText: {
+    color: '#fff',
+    fontSize: 13,
   },
 });
