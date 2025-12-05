@@ -996,25 +996,29 @@ export default function SimpleBrowser() {
     >
       <BlurView intensity={80} tint={Platform.OS === 'ios' ? 'default' : 'dark'} style={styles.bottomDock}>
         <View style={styles.addressRow}>
-          <ToolbarButton 
-            icon="chevron-back" 
-            accessibilityLabel="后退" 
-            disabled={!canGoBack} 
-            onPress={handleGoBack} 
-          />
-          <ToolbarButton 
-            icon="chevron-forward" 
-            accessibilityLabel="前进" 
-            disabled={!canGoForward} 
-            onPress={() => {
-              // 设置导航标志，防止隐藏导航栏
-              isNavigatingRef.current = true;
-              setTimeout(() => {
-                isNavigatingRef.current = false;
-              }, 800);
-              webViewRef.current?.goForward();
-            }} 
-          />
+          {canGoBack && (
+            <ToolbarButton 
+              icon="chevron-back" 
+              accessibilityLabel="后退" 
+              disabled={false} 
+              onPress={handleGoBack} 
+            />
+          )}
+          {canGoForward && (
+            <ToolbarButton 
+              icon="chevron-forward" 
+              accessibilityLabel="前进" 
+              disabled={false} 
+              onPress={() => {
+                // 设置导航标志，防止隐藏导航栏
+                isNavigatingRef.current = true;
+                setTimeout(() => {
+                  isNavigatingRef.current = false;
+                }, 800);
+                webViewRef.current?.goForward();
+              }} 
+            />
+          )}
           <TextInput
             style={styles.input}
             value={currentInput}
@@ -2129,7 +2133,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   input: {
-    flex: 1,
+    flex: 6,
     borderWidth: 0.5,
     borderColor: 'rgba(0, 0, 0, 0.1)',
     borderRadius: 30,
