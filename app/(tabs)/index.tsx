@@ -244,6 +244,8 @@ export default function SimpleBrowser() {
   const webViewRef = useRef<WebView>(null);
   // 存储所有标签页对应的包装 View 引用，用于截图（captureRef 不能直接捕获 WebView）
   const webViewWrapperRefs = useRef<Record<string, View | null>>({});
+  // 防止导航时隐藏导航栏的标志
+  const isNavigatingRef = useRef(false);
   
   // ==================== 导航栏显示/隐藏状态 ====================
   // 导航栏是否可见
@@ -255,6 +257,11 @@ export default function SimpleBrowser() {
   // 标签页切换缩放和淡入淡出
   const tabSwitchScale = useRef(new Animated.Value(1)).current;
   const tabSwitchOpacity = useRef(new Animated.Value(1)).current;
+  // 标签页展开动画（从卡片到全屏）
+  const tabExpandScale = useRef(new Animated.Value(1)).current;
+  const tabExpandOpacity = useRef(new Animated.Value(1)).current;
+  // 导航栏按钮点击动画值（每个按钮一个）
+  const buttonAnimations = useRef<Record<string, { scale: Animated.Value; opacity: Animated.Value }>>({}).current;
   
   // ==================== 收藏夹状态 ====================
   // 收藏夹列表
@@ -529,6 +536,12 @@ export default function SimpleBrowser() {
     // 切换前先截图当前标签页
     await captureCurrentTabSnapshot();
     
+    // 重置动画值确保新标签页正确显示
+    tabSwitchScale.setValue(1);
+    tabSwitchOpacity.setValue(1);
+    tabExpandScale.setValue(1);
+    tabExpandOpacity.setValue(1);
+    
     // 创建新标签页
     const nextTab = createTab();
     
@@ -675,6 +688,12 @@ export default function SimpleBrowser() {
     if (activeTab.isStartPage) {
       return;
     }
+    
+    // 设置导航标志，防止隐藏导航栏
+    isNavigatingRef.current = true;
+    setTimeout(() => {
+      isNavigatingRef.current = false;
+    }, 800);
     
     // 后退时的过渡动画
     Animated.timing(webViewOpacity, {
@@ -843,6 +862,12 @@ export default function SimpleBrowser() {
       const data = JSON.parse(event.nativeEvent.data);
       
       if (data.type === 'scroll') {
+        // 如果正在导航中，不响应滚动事件隐藏导航栏
+        if (isNavigatingRef.current) {
+          showNavBar(); // 保持导航栏显示
+          return;
+        }
+        
         if (data.direction === 'down' && data.scrollY > 50) {
           // 向下滚动且不在顶部，隐藏导航栏
           hideNavBar();
@@ -934,19 +959,26 @@ export default function SimpleBrowser() {
       setActiveTabId(tabId);
       setSwitcherVisible(false);
       
-      // 标签页切换动画：恢复并淡入
+      // 执行展开动画：从 0.8 扩展到 1.0
       Animated.parallel([
-        Animated.timing(tabSwitchScale, {
+        Animated.spring(tabExpandScale, {
+          toValue: 1,
+          friction: 8,
+          tension: 100,
+          useNativeDriver: true,
+        }),
+        Animated.timing(tabExpandOpacity, {
           toValue: 1,
           duration: 200,
           useNativeDriver: true,
         }),
-        Animated.timing(tabSwitchOpacity, {
-          toValue: 1,
-          duration: 200,
-          useNativeDriver: true,
-        }),
-      ]).start();
+      ]).start(() => {
+        // 展开动画完成后恢复其他动画值
+        tabSwitchScale.setValue(1);
+        tabSwitchOpacity.setValue(1);
+        tabExpandScale.setValue(1);
+        tabExpandOpacity.setValue(1);
+      });
     });
   };
 
@@ -974,7 +1006,14 @@ export default function SimpleBrowser() {
             icon="chevron-forward" 
             accessibilityLabel="前进" 
             disabled={!canGoForward} 
-            onPress={() => webViewRef.current?.goForward()} 
+            onPress={() => {
+              // 设置导航标志，防止隐藏导航栏
+              isNavigatingRef.current = true;
+              setTimeout(() => {
+                isNavigatingRef.current = false;
+              }, 800);
+              webViewRef.current?.goForward();
+            }} 
           />
           <TextInput
             style={styles.input}
@@ -990,13 +1029,17 @@ export default function SimpleBrowser() {
             selectTextOnFocus
           />
           {isLoading ? (
-            <Pressable onPress={() => webViewRef.current?.stopLoading()} style={styles.toolbarButton}>
-              <Ionicons name="close" size={20} color="#11181C" />
-            </Pressable>
+            <ToolbarButton 
+              icon="close" 
+              accessibilityLabel="停止" 
+              onPress={() => webViewRef.current?.stopLoading()} 
+            />
           ) : (
-            <Pressable onPress={() => webViewRef.current?.reload()} style={styles.toolbarButton}>
-              <Ionicons name="refresh" size={20} color="#11181C" />
-            </Pressable>
+            <ToolbarButton 
+              icon="refresh" 
+              accessibilityLabel="刷新" 
+              onPress={() => webViewRef.current?.reload()} 
+            />
           )}
         </View>
 
@@ -1033,13 +1076,15 @@ export default function SimpleBrowser() {
   return (
     // View 容器，占满屏幕，让 WebView 延伸到状态栏区域
     <View style={[styles.fullScreen, { backgroundColor: isDark ? '#000' : '#fff' }]}>
-      {/* WebView 容器（占据主要空间） - 带标签页切换动画 */}
+      {/* WebView 容器（占据主要空间） - 带标签页切换和展开动画 */}
       <Animated.View style={[
         styles.webViewWrapper, 
         { 
           backgroundColor: isDark ? '#000' : '#fff',
-          transform: [{ scale: tabSwitchScale }],
-          opacity: tabSwitchOpacity,
+          transform: [
+            { scale: Animated.multiply(tabSwitchScale, tabExpandScale) }
+          ],
+          opacity: Animated.multiply(tabSwitchOpacity, tabExpandOpacity),
         }
       ]}>
         {/* 为每个标签页渲染独立的WebView，通过显示/隐藏控制，避免切换时重新加载 */}
@@ -1169,24 +1214,75 @@ type ToolbarButtonProps = {
  * 用于底部工具栏的前进、后退、刷新等按钮
  */
 function ToolbarButton({ icon, accessibilityLabel, disabled, onPress }: ToolbarButtonProps) {
+  const [scaleAnim] = useState(new Animated.Value(1));
+  const [opacityAnim] = useState(new Animated.Value(1));
+  
+  const handlePress = () => {
+    if (disabled) return;
+    
+    // 执行点击动画
+    Animated.sequence([
+      // 快速缩小到 0.85 并淡出到 0.6
+      Animated.parallel([
+        Animated.timing(scaleAnim, {
+          toValue: 0.85,
+          duration: 100,
+          useNativeDriver: false,
+        }),
+        Animated.timing(opacityAnim, {
+          toValue: 0.6,
+          duration: 100,
+          useNativeDriver: false,
+        }),
+      ]),
+      // 恢复到原始大小和不透明度
+      Animated.parallel([
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          friction: 8,
+          tension: 100,
+          useNativeDriver: false,
+        }),
+        Animated.timing(opacityAnim, {
+          toValue: 1,
+          duration: 100,
+          useNativeDriver: false,
+        }),
+      ]),
+    ]).start();
+    
+    // 执行回调
+    onPress();
+  };
+  
   return (
-    <Pressable
-      onPress={onPress}                    // 点击事件处理
-      disabled={disabled}                  // 禁用状态
-      accessibilityRole="button"           // 声明为按钮角色（用于无障碍）
-      accessibilityLabel={accessibilityLabel}  // 无障碍标签
+    <Animated.View
       style={[
-        styles.toolbarButton,              // 基础样式
-        disabled && styles.toolbarButtonDisabled  // 禁用时应用额外样式（条件样式）
+        {
+          flex: 1,
+          transform: [{ scale: scaleAnim }],
+          opacity: opacityAnim,
+        },
       ]}
     >
-      {/* 图标：禁用时显示灰色，正常时显示深色 */}
-      <Ionicons 
-        name={icon} 
-        size={20} 
-        color={disabled ? '#94a3b8' : '#11181C'}  // 三元运算符根据状态选择颜色
-      />
-    </Pressable>
+      <Pressable
+        onPress={handlePress}                    // 点击事件处理
+        disabled={disabled}                  // 禁用状态
+        accessibilityRole="button"           // 声明为按钮角色（用于无障碍）
+        accessibilityLabel={accessibilityLabel}  // 无障碍标签
+        style={[
+          styles.toolbarButton,              // 基础样式
+          disabled && styles.toolbarButtonDisabled  // 禁用时应用额外样式（条件样式）
+        ]}
+      >
+        {/* 图标：禁用时显示灰色，正常时显示深色 */}
+        <Ionicons 
+          name={icon} 
+          size={20} 
+          color={disabled ? '#94a3b8' : '#11181C'}  // 三元运算符根据状态选择颜色
+        />
+      </Pressable>
+    </Animated.View>
   );
 }
 
@@ -1433,6 +1529,35 @@ function TabCard({ tab, active, onSelect, onClose }: TabCardProps) {
   const scale = useRef(new Animated.Value(1)).current;
   const opacity = useRef(new Animated.Value(1)).current;
   const isClosing = useRef(false);
+  const isSelecting = useRef(false);
+  
+  // 处理标签页选择 - 触发父组件的展开动画
+  const handleSelectPress = () => {
+    if (isSelecting.current) return;
+    isSelecting.current = true;
+    
+    // 执行收缩到卡片状态的动画（标志着选择开始）
+    Animated.parallel([
+      Animated.timing(scale, {
+        toValue: 0.85,
+        duration: 120,
+        useNativeDriver: true,
+      }),
+      Animated.timing(opacity, {
+        toValue: 0.5,
+        duration: 120,
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      // 调用父组件的 onSelect，父组件会处理展开动画
+      onSelect();
+      
+      // 重置标志和动画值
+      isSelecting.current = false;
+      scale.setValue(1);
+      opacity.setValue(1);
+    });
+  };
   
   // 手势响应器 - 上滑关闭
   const panResponder = useMemo(
@@ -1539,7 +1664,7 @@ function TabCard({ tab, active, onSelect, onClose }: TabCardProps) {
       </View>
       
       {/* 卡片内容 - 网页预览 */}
-      <Pressable style={styles.tabCardContent} onPress={onSelect}>
+      <Pressable style={styles.tabCardContent} onPress={handleSelectPress}>
         {tab.snapshot ? (
           <Image 
             source={{ uri: tab.snapshot }} 
@@ -1961,20 +2086,6 @@ const styles = StyleSheet.create({
     gap: 8,
     backgroundColor: '#fff',
   },
-  // 新闻卡片深色模式
-  ritualCardDark: {
-    backgroundColor: '#2c2c2e',
-    borderColor: '#3a3a3c',
-  },
-  ritualRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  ritualText: {
-    fontSize: 14,
-    color: '#0f172a',
-  },
   // 加载指示器浮层
   loaderOverlay: {
     // ...StyleSheet.absoluteFillObject 是对象展开运算符，等价于：
@@ -1994,23 +2105,18 @@ const styles = StyleSheet.create({
     paddingBottom: 34,
     paddingTop: 12,
     paddingHorizontal: 12,
-    borderTopWidth: 0.5,
-    borderTopColor: 'rgba(0, 0, 0, 0.1)',
     overflow: 'hidden',
   },
   toolbar: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-start',
     paddingHorizontal: 4,
-    flexWrap: 'wrap',
   },
   toolbarButton: {
     flex: 1,
     marginHorizontal: 4,
     paddingVertical: 10,
     borderRadius: 12,
-    borderWidth: 0.5,
-    borderColor: 'rgba(0, 0, 0, 0.08)',
     backgroundColor: 'rgba(255, 255, 255, 0.5)',
     alignItems: 'center',
   },
@@ -2031,16 +2137,6 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     fontSize: 16,
     backgroundColor: 'rgba(255, 255, 255, 0.6)',
-  },
-  goButton: {
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-    borderRadius: 30,
-    backgroundColor: '#2563eb',
-  },
-  goLabel: {
-    fontSize: 14,
-    fontWeight: '600',
   },
   // 标签页切换器浮层（全屏遮罩）
   switcherOverlay: {
