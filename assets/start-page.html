@@ -138,6 +138,12 @@
             font-family: inherit;
             background: rgba(0, 0, 0, 0.02);
             min-width: 0;
+            color: #000;
+        }
+
+        .add-link-inputs input::placeholder {
+            color: #000;
+            opacity: 1;
         }
         
         .add-link-inputs button {
@@ -201,13 +207,14 @@
             }
             
             .add-link-inputs input {
-                background: rgba(255, 255, 255, 0.1);
+                background: rgba(255, 255, 255, 0.9);
                 border: 1px solid rgba(255, 255, 255, 0.2);
-                color: white;
+                color: #000;
             }
             
             .add-link-inputs input::placeholder {
-                color: rgba(255, 255, 255, 0.6);
+                color: #000;
+                opacity: 1;
             }
         }
     </style>
@@ -328,18 +335,41 @@
         
         // 接收来自 React Native 的背景图片 URI
         window.setBackgroundImage = function(imageUri) {
+            console.log('setBackgroundImage called, uri length:', imageUri ? imageUri.length : 0);
             if (imageUri) {
-                // 设置背景图片
-                document.body.style.background = `url(${imageUri})`;
-                document.body.style.backgroundSize = 'cover';
-                document.body.style.backgroundPosition = 'center';
-                document.body.style.backgroundAttachment = 'fixed';
+                // 设置背景图片，同时应用到 html 和 body
+                const style = `url("${imageUri}") center/cover no-repeat fixed`;
+                document.body.style.background = style;
+                document.documentElement.style.background = style;
+                
+                // 强制重绘
+                document.body.style.display = 'none';
+                document.body.offsetHeight; // 触发重排
+                document.body.style.display = 'flex';
+                
+                console.log('Background applied');
             } else {
                 // 恢复默认背景
-                document.body.style.backgroundImage = 'none';
                 document.body.style.background = 'linear-gradient(135deg, #fefeff 0%, #ffffff 100%)';
+                document.documentElement.style.background = 'none';
+                console.log('Background reset');
             }
         };
+
+        // 监听来自 React Native 的消息
+        function handleMessage(event) {
+            try {
+                const data = JSON.parse(event.data);
+                if (data.type === 'SET_BACKGROUND') {
+                    window.setBackgroundImage(data.payload);
+                }
+            } catch (e) {
+                console.log('Message handling error:', e);
+            }
+        }
+
+        document.addEventListener('message', handleMessage);
+        window.addEventListener('message', handleMessage);
         
         // 接收来自 React Native 的快捷链接数据
         window.setQuickLinks = function(links) {

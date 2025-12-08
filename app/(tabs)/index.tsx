@@ -4,10 +4,13 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Asset } from 'expo-asset';
 import { BlurView } from 'expo-blur';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActionSheetIOS,
   ActivityIndicator,
+  Alert,
   Animated,
   Dimensions,
   Image,
@@ -246,6 +249,22 @@ export default function SimpleBrowser() {
   const webViewWrapperRefs = useRef<Record<string, View | null>>({});
   // 防止导航时隐藏导航栏的标志
   const isNavigatingRef = useRef(false);
+
+  // 将已保存的启动页背景同步给 WebView（处理首屏加载和切换回启动页的场景）
+  const activeStartTabId = activeTab?.id;
+  const isActiveTabStartPage = activeTab?.isStartPage;
+  useEffect(() => {
+    if (!startPageUrl || !isActiveTabStartPage || !webViewRef.current) return;
+    const uri = startPageBgImage || '';
+    console.log('Setting background image:', uri ? 'Has URI' : 'Empty');
+    setTimeout(() => {
+      const message = JSON.stringify({
+        type: 'SET_BACKGROUND',
+        payload: uri
+      });
+      webViewRef.current?.postMessage(message);
+    }, 500);
+  }, [startPageBgImage, startPageUrl, activeStartTabId, isActiveTabStartPage]);
   
   // ==================== 导航栏显示/隐藏状态 ====================
   // 导航栏是否可见
@@ -372,26 +391,33 @@ export default function SimpleBrowser() {
       }
       
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         allowsEditing: false,
-        aspect: [9, 16],
         quality: 0.8,
       });
       
-      if (!result.canceled) {
-        const imageUri = result.assets[0].uri;
-        setStartPageBgImage(imageUri);
+      if (!result.canceled && result.assets[0]) {
+        const pickedUri = result.assets[0].uri;
+        
+        // 读取图片为 base64，转换为 data URL
+        const base64 = await FileSystem.readAsStringAsync(pickedUri, {
+          encoding: 'base64',
+        });
+        const dataUrl = `data:image/jpeg;base64,${base64}`;
+        
+        setStartPageBgImage(dataUrl);
         
         // 保存到本地存储
         try {
-          await AsyncStorage.setItem(START_PAGE_BG_STORAGE_KEY, imageUri);
+          await AsyncStorage.setItem(START_PAGE_BG_STORAGE_KEY, dataUrl);
           
-          // 立即刷新页面显示背景
+          // 立即刷新页面显示背景 - 使用 postMessage 发送大数据
           setTimeout(() => {
-            webViewRef.current?.injectJavaScript(`
-              window.setBackgroundImage('${imageUri}');
-              true;
-            `);
+            const message = JSON.stringify({
+              type: 'SET_BACKGROUND',
+              payload: dataUrl
+            });
+            webViewRef.current?.postMessage(message);
           }, 100);
         } catch (e) {
           console.warn('Failed to save background image', e);
@@ -412,10 +438,11 @@ export default function SimpleBrowser() {
       
       // 立即刷新页面恢复默认背景
       setTimeout(() => {
-        webViewRef.current?.injectJavaScript(`
-          window.setBackgroundImage('');
-          true;
-        `);
+        const message = JSON.stringify({
+          type: 'SET_BACKGROUND',
+          payload: ''
+        });
+        webViewRef.current?.postMessage(message);
       }, 100);
     } catch (e) {
       console.warn('Failed to reset background image', e);
@@ -602,6 +629,44 @@ export default function SimpleBrowser() {
     // 根据参数决定是否关闭切换器
     if (!stayInSwitcher) {
       setSwitcherVisible(false);
+    }
+  };
+
+  // 关闭所有标签页并回到一个全新的启动页
+  const handleCloseAllTabs = () => {
+    const fresh = createTab();
+    setTabs([fresh]);
+    setActiveTabId(fresh.id);
+    setCanGoBack(false);
+    setCanGoForward(false);
+    setSwitcherVisible(false);
+  };
+
+  // 长按标签页按钮弹出操作：关闭当前或全部标签页
+  const handleTabButtonLongPress = () => {
+    const closeCurrent = () => {
+      if (activeTabId) {
+        handleCloseTab(activeTabId);
+      }
+    };
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: ['关闭当前标签页', '关闭所有标签页', '取消'],
+          destructiveButtonIndices: [0, 1],
+          cancelButtonIndex: 2,
+        },
+        (buttonIndex) => {
+          if (buttonIndex === 0) closeCurrent();
+          if (buttonIndex === 1) handleCloseAllTabs();
+        }
+      );
+    } else {
+      Alert.alert('标签页', '选择操作', [
+        { text: '关闭当前标签页', onPress: closeCurrent },
+        { text: '关闭所有标签页', style: 'destructive', onPress: handleCloseAllTabs },
+        { text: '取消', style: 'cancel' },
+      ]);
     }
   };
 
@@ -862,8 +927,8 @@ export default function SimpleBrowser() {
       const data = JSON.parse(event.nativeEvent.data);
       
       if (data.type === 'scroll') {
-        // 如果正在导航中，不响应滚动事件隐藏导航栏
-        if (isNavigatingRef.current) {
+        // 如果正在导航中或在启动页，不响应滚动事件隐藏导航栏
+        if (isNavigatingRef.current || activeTab?.isStartPage) {
           showNavBar(); // 保持导航栏显示
           return;
         }
@@ -924,10 +989,11 @@ export default function SimpleBrowser() {
       } else if (data.type === 'requestBackgroundImage') {
         // 启动页请求背景图片
         const bgImageUri = startPageBgImage || '';
-        webViewRef.current?.injectJavaScript(`
-          window.setBackgroundImage('${bgImageUri}');
-          true;
-        `);
+        const message = JSON.stringify({
+          type: 'SET_BACKGROUND',
+          payload: bgImageUri
+        });
+        webViewRef.current?.postMessage(message);
       }
     } catch (e) {
       // 忽略非 JSON 消息
@@ -1061,7 +1127,15 @@ export default function SimpleBrowser() {
           <ToolbarButton 
             icon="book-outline" 
             accessibilityLabel="收藏夹" 
-            onPress={() => setBookmarksPanelVisible(true)} 
+            onPress={() => setBookmarksPanelVisible(true)}
+            onLongPress={() => {
+              if (!activeTab || activeTab.isStartPage || !activeTab.url) {
+                Alert.alert('无法收藏', '请在网页中使用长按收藏');
+                return;
+              }
+              handleAddBookmark();
+              Alert.alert('已添加到收藏夹');
+            }}
           />
           <ToolbarButton 
             icon="layers-outline" 
@@ -1069,7 +1143,8 @@ export default function SimpleBrowser() {
             onPress={async () => {
               await captureCurrentTabSnapshot();
               setSwitcherVisible(true);
-            }} 
+            }}
+            onLongPress={handleTabButtonLongPress}
           />
         </View>
       </BlurView>
@@ -1105,13 +1180,13 @@ export default function SimpleBrowser() {
               ref={(ref) => { webViewWrapperRefs.current[tab.id] = ref; }}
               style={[
                   // 所有WebView包装器使用绝对定位铺满容器
-                  { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
-                  // 只显示活跃标签，非活跃标签隐藏但保持挂载以保留状态
-                  tab.id === activeTabId 
-                    ? { opacity: webViewOpacity, zIndex: 1 } 
-                    : { opacity: 0, zIndex: 0 },
+                  { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: isDark ? '#000' : '#fff' },
+                  // 只显示活跃标签，非活跃标签彻底隐藏避免叠加
+                  isActive
+                    ? { opacity: webViewOpacity, zIndex: 2, display: 'flex' }
+                    : { opacity: 0, zIndex: -1, display: 'none' },
               ]}
-              pointerEvents={tab.id === activeTabId ? 'auto' : 'none'}
+              pointerEvents={isActive ? 'auto' : 'none'}
               collapsable={false}
             >
               <WebView
@@ -1142,6 +1217,7 @@ export default function SimpleBrowser() {
                 contentInsetAdjustmentBehavior="automatic"
                 originWhitelist={['*']}
                 allowFileAccess={true}
+                allowFileAccessFromFileURLs={true}
                 allowUniversalAccessFromFileURLs={true}
               />
             </Animated.View>
@@ -1211,13 +1287,14 @@ type ToolbarButtonProps = {
   accessibilityLabel: string;            // 无障碍标签（屏幕阅读器会读取）
   disabled?: boolean;                    // 是否禁用（可选，默认 false）
   onPress: () => void;                   // 点击回调函数
+  onLongPress?: () => void;              // 长按回调函数（可选）
 };
 
 /**
  * 工具栏按钮组件
  * 用于底部工具栏的前进、后退、刷新等按钮
  */
-function ToolbarButton({ icon, accessibilityLabel, disabled, onPress }: ToolbarButtonProps) {
+function ToolbarButton({ icon, accessibilityLabel, disabled, onPress, onLongPress }: ToolbarButtonProps) {
   const [scaleAnim] = useState(new Animated.Value(1));
   const [opacityAnim] = useState(new Animated.Value(1));
   
@@ -1271,6 +1348,7 @@ function ToolbarButton({ icon, accessibilityLabel, disabled, onPress }: ToolbarB
     >
       <Pressable
         onPress={handlePress}                    // 点击事件处理
+        onLongPress={onLongPress}
         disabled={disabled}                  // 禁用状态
         accessibilityRole="button"           // 声明为按钮角色（用于无障碍）
         accessibilityLabel={accessibilityLabel}  // 无障碍标签
