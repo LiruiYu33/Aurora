@@ -137,7 +137,7 @@ const formatInput = (rawValue: string) => {
 const SWIPE_MIN_DRAG = 0;              // 识别向上滑动的最小距离，0=任何向上移动都响应
 const SWIPE_DIRECTION_RATIO = 0;       // 横向/纵向的容错比，0=只要有向上分量就拦截（未使用，保留）
 const SWIPE_RELEASE_VELOCITY = 0;      // 松手时的向上速度阈值，0=任何向上速度都触发
-const SWIPE_CLOSE_DISTANCE = 8;        // 上滑超过该距离即可判定关闭（越小越容易关闭）
+const SWIPE_CLOSE_DISTANCE = 150;      // 上滑超过该距离即可判定关闭（越小越容易关闭，建议50-150）
 
 // ==================== 标签页切换器布局常量 ====================
 // 调整这个值来控制左右标签页的间距，越小越近（可以看到更多相邻卡片）
@@ -1564,22 +1564,42 @@ type TabCardProps = {
   active: boolean;
   onSelect: () => void;
   onClose: () => void;
+  isNewTab?: boolean;
 };
 
 /**
  * 标签页卡片组件
  * 显示网页缩略图效果，支持上滑关闭
  */
-function TabCard({ tab, active, onSelect, onClose }: TabCardProps) {
+function TabCard({ tab, active, onSelect, onClose, isNewTab }: TabCardProps) {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
   
   // 动画值
-  const translateY = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(isNewTab ? -SCREEN_HEIGHT : 0)).current;
   const scale = useRef(new Animated.Value(1)).current;
-  const opacity = useRef(new Animated.Value(1)).current;
+  const opacity = useRef(new Animated.Value(isNewTab ? 0 : 1)).current;
   const isClosing = useRef(false);
   const isSelecting = useRef(false);
+  
+  // 新标签页飞入动画
+  useEffect(() => {
+    if (isNewTab) {
+      Animated.parallel([
+        Animated.spring(translateY, {
+          toValue: 0,
+          friction: 10,
+          tension: 70,
+          useNativeDriver: true,
+        }),
+        Animated.timing(opacity, {
+          toValue: 1,
+          duration: 300,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }
+  }, [isNewTab]);
   
   // 处理标签页选择 - 触发父组件的展开动画
   const handleSelectPress = () => {
@@ -1599,10 +1619,10 @@ function TabCard({ tab, active, onSelect, onClose }: TabCardProps) {
         onStartShouldSetPanResponder: () => true,
         // 只要有向上分量就接管手势（无论水平方向如何移动）
         onMoveShouldSetPanResponder: (_, { dy }) => dy < -SWIPE_MIN_DRAG,
-        // 同时也要在捕获阶段拦截，确保手势不被ScrollView抢走
-        onMoveShouldSetPanResponderCapture: (_, { dy, dx }) => {
-          // 如果向上移动的分量存在，就捕获手势
-          return dy < -SWIPE_MIN_DRAG && Math.abs(dy) > Math.abs(dx) * 0.3;
+        // 在捕获阶段优先拦截，只要有向上滑动就立即捕获，不考虑横向分量
+        onMoveShouldSetPanResponderCapture: (_, { dy }) => {
+          // 优先级策略：只要检测到向上滑动，立即捕获手势，阻止横向滚动
+          return dy < -SWIPE_MIN_DRAG;
         },
         onPanResponderGrant: () => {
           isClosing.current = false;
@@ -1620,6 +1640,7 @@ function TabCard({ tab, active, onSelect, onClose }: TabCardProps) {
             scale.setValue(1 - progress * 0.1);
           }
         },
+        onPanResponderTerminationRequest: () => false,
         onPanResponderRelease: (_, { dy, vy }) => {
           const clampedDy = Math.min(0, dy);
           // 向上滑动超过阈值 或 有向上速度 即可关闭
@@ -1754,6 +1775,22 @@ function TabSwitcher({ tabs, activeTabId, onSelect, onCloseTab, onAddTab, onDism
   const activeIndex = tabs.findIndex(t => t.id === activeTabId);
   const [currentIndex, setCurrentIndex] = useState(activeIndex >= 0 ? activeIndex : 0);
   
+  // 跟踪最新添加的标签页ID（用于飞入动画）
+  const latestTabIdRef = useRef<string | null>(null);
+  const prevTabsLengthRef = useRef(tabs.length);
+  
+  useEffect(() => {
+    if (tabs.length > prevTabsLengthRef.current) {
+      // 新增了标签页，记录最新的ID
+      latestTabIdRef.current = tabs[tabs.length - 1].id;
+      // 500ms后清除，避免重新渲染时误判
+      setTimeout(() => {
+        latestTabIdRef.current = null;
+      }, 500);
+    }
+    prevTabsLengthRef.current = tabs.length;
+  }, [tabs.length]);
+  
   // 滚动引用
   const scrollViewRef = useRef<ScrollView>(null);
   
@@ -1872,6 +1909,7 @@ function TabSwitcher({ tabs, activeTabId, onSelect, onCloseTab, onAddTab, onDism
               active={tab.id === activeTabId}
               onSelect={() => handleDismissWithAnim(() => onSelect(tab.id))}
               onClose={() => onCloseTab(tab.id, true)}
+              isNewTab={tab.id === latestTabIdRef.current}
             />
           </View>
         ))}
