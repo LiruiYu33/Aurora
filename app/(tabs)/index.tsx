@@ -2201,6 +2201,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    paddingTop: 60, // 避开状态栏和刘海屏
+    paddingHorizontal: 20,
+    paddingBottom: 16,
   },
   switcherAddButton: {
     flexDirection: 'row',
