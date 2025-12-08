@@ -13,6 +13,7 @@ import {
   Alert,
   Animated,
   Dimensions,
+  Easing,
   Image,
   Keyboard,
   PanResponder,
@@ -1007,12 +1008,8 @@ export default function SimpleBrowser() {
    * @param tabId - 要激活的标签页 ID
    */
   const handleSelectTab = async (tabId: string) => {
-    // 立即切换，无动画（最流畅的体验）
-    // 如需动画，调整下方参数：
-    // - duration: 动画时长（毫秒），建议 150-300
-    // - 初始 scale: 建议 0.92-0.96（越接近1越不明显但越流畅）
-    // - 初始 opacity: 建议 0.7-0.9
-    
+    // 标签页选择通过 TabCard 的 onSelect 触发，已经包含退出动画
+    // 这里只需要更新状态
     setActiveTabId(tabId);
     setSwitcherVisible(false);
     
@@ -1022,17 +1019,6 @@ export default function SimpleBrowser() {
     tabExpandScale.setValue(1);
     tabExpandOpacity.setValue(1);
     webViewOpacity.setValue(1);
-    
-    // 可选：启用下方代码添加动画（会降低流畅度）
-    /*
-    tabExpandOpacity.setValue(0.8);
-    Animated.timing(tabExpandOpacity, {
-      toValue: 1,
-      duration: 200,  // 调整此值改变动画速度
-      easing: Easing.out(Easing.quad),
-      useNativeDriver: true,
-    }).start();
-    */
   };
 
   const renderBottomDock = () => (
@@ -1771,6 +1757,49 @@ function TabSwitcher({ tabs, activeTabId, onSelect, onCloseTab, onAddTab, onDism
   // 滚动引用
   const scrollViewRef = useRef<ScrollView>(null);
   
+  // 动画值：从底部滑入
+  const animTranslateY = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
+  const animOpacity = useRef(new Animated.Value(0)).current;
+  
+  // 进入动画：从底部滑入
+  useEffect(() => {
+    Animated.parallel([
+      Animated.spring(animTranslateY, {
+        toValue: 0,
+        friction: 12,
+        tension: 90,
+        useNativeDriver: true,
+      }),
+      Animated.timing(animOpacity, {
+        toValue: 1,
+        duration: 250,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, []);
+  
+  // 退出动画：向底部滑出
+  const handleDismissWithAnim = (callback?: () => void) => {
+    Animated.parallel([
+      Animated.timing(animTranslateY, {
+        toValue: SCREEN_HEIGHT,
+        duration: 280,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(animOpacity, {
+        toValue: 0,
+        duration: 280,
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      if (callback && typeof callback === 'function') {
+        callback();
+      }
+      onDismiss();
+    });
+  };
+  
   // 计算单个卡片的滚动宽度
   const cardScrollWidth = SCREEN_WIDTH * TAB_CARD_SPACING;
   
@@ -1794,15 +1823,24 @@ function TabSwitcher({ tabs, activeTabId, onSelect, onCloseTab, onAddTab, onDism
   return (
     <View style={styles.switcherOverlay}>
       {/* 背景 */}
-      <BlurView
-        intensity={80}
-        tint={isDark ? 'dark' : 'light'}
-        style={StyleSheet.absoluteFill}
-      />
+      <Animated.View style={[StyleSheet.absoluteFill, { opacity: animOpacity }]}>
+        <BlurView
+          intensity={80}
+          tint={isDark ? 'dark' : 'light'}
+          style={StyleSheet.absoluteFill}
+        />
+      </Animated.View>
+      
+      <Animated.View style={[
+        StyleSheet.absoluteFill,
+        {
+          transform: [{ translateY: animTranslateY }],
+        },
+      ]}>
       
       {/* 头部 */}
       <View style={styles.switcherHeader}>
-        <Pressable onPress={onDismiss} style={styles.switcherDoneButton}>
+        <Pressable onPress={handleDismissWithAnim} style={styles.switcherDoneButton}>
           <ThemedText style={styles.switcherDoneText}>完成</ThemedText>
         </Pressable>
         
@@ -1832,7 +1870,7 @@ function TabSwitcher({ tabs, activeTabId, onSelect, onCloseTab, onAddTab, onDism
             <TabCard
               tab={tab}
               active={tab.id === activeTabId}
-              onSelect={() => onSelect(tab.id)}
+              onSelect={() => handleDismissWithAnim(() => onSelect(tab.id))}
               onClose={() => onCloseTab(tab.id, true)}
             />
           </View>
@@ -1863,6 +1901,7 @@ function TabSwitcher({ tabs, activeTabId, onSelect, onCloseTab, onAddTab, onDism
           <ThemedText style={[styles.switcherNewTabText, isDark && { color: '#fff' }]}>新建标签页</ThemedText>
         </Pressable>
       </View>
+      </Animated.View>
     </View>
   );
 }
