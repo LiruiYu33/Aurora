@@ -560,8 +560,10 @@ export default function SimpleBrowser() {
    * @param stayInSwitcher - 是否停留在标签页切换器中（默认 false，会关闭切换器）
    */
   const handleNewTab = async (stayInSwitcher = false) => {
-    // 切换前先截图当前标签页
-    await captureCurrentTabSnapshot();
+    // 只有在非切换器模式下才截图当前标签页
+    if (!isSwitcherVisible) {
+      await captureCurrentTabSnapshot();
+    }
     
     // 重置动画值确保新标签页正确显示
     tabSwitchScale.setValue(1);
@@ -1005,47 +1007,32 @@ export default function SimpleBrowser() {
    * @param tabId - 要激活的标签页 ID
    */
   const handleSelectTab = async (tabId: string) => {
-    // 切换前先截图当前标签页
-    await captureCurrentTabSnapshot();
+    // 立即切换，无动画（最流畅的体验）
+    // 如需动画，调整下方参数：
+    // - duration: 动画时长（毫秒），建议 150-300
+    // - 初始 scale: 建议 0.92-0.96（越接近1越不明显但越流畅）
+    // - 初始 opacity: 建议 0.7-0.9
     
-    // 标签页切换动画：缩小并淡出
-    Animated.parallel([
-      Animated.timing(tabSwitchScale, {
-        toValue: 0.95,
-        duration: 150,
-        useNativeDriver: true,
-      }),
-      Animated.timing(tabSwitchOpacity, {
-        toValue: 0.3,
-        duration: 150,
-        useNativeDriver: true,
-      }),
-    ]).start(() => {
-      // 动画中期：切换标签页
-      setActiveTabId(tabId);
-      setSwitcherVisible(false);
-      
-      // 执行展开动画：从 0.8 扩展到 1.0
-      Animated.parallel([
-        Animated.spring(tabExpandScale, {
-          toValue: 1,
-          friction: 8,
-          tension: 100,
-          useNativeDriver: true,
-        }),
-        Animated.timing(tabExpandOpacity, {
-          toValue: 1,
-          duration: 200,
-          useNativeDriver: true,
-        }),
-      ]).start(() => {
-        // 展开动画完成后恢复其他动画值
-        tabSwitchScale.setValue(1);
-        tabSwitchOpacity.setValue(1);
-        tabExpandScale.setValue(1);
-        tabExpandOpacity.setValue(1);
-      });
-    });
+    setActiveTabId(tabId);
+    setSwitcherVisible(false);
+    
+    // 重置所有动画值
+    tabSwitchScale.setValue(1);
+    tabSwitchOpacity.setValue(1);
+    tabExpandScale.setValue(1);
+    tabExpandOpacity.setValue(1);
+    webViewOpacity.setValue(1);
+    
+    // 可选：启用下方代码添加动画（会降低流畅度）
+    /*
+    tabExpandOpacity.setValue(0.8);
+    Animated.timing(tabExpandOpacity, {
+      toValue: 1,
+      duration: 200,  // 调整此值改变动画速度
+      easing: Easing.out(Easing.quad),
+      useNativeDriver: true,
+    }).start();
+    */
   };
 
   const renderBottomDock = () => (
@@ -1160,9 +1147,9 @@ export default function SimpleBrowser() {
         styles.webViewWrapper, 
         { 
           backgroundColor: isDark ? '#000' : '#fff',
-          transform: [
-            { scale: Animated.multiply(tabSwitchScale, tabExpandScale) }
-          ],
+          // 移除 scale transform 以提升性能
+          // 如需启用缩放动画，取消注释下行（会降低帧率）
+          // transform: [{ scale: Animated.multiply(tabSwitchScale, tabExpandScale) }],
           opacity: Animated.multiply(tabSwitchOpacity, tabExpandOpacity),
         }
       ]}>
@@ -1202,12 +1189,7 @@ export default function SimpleBrowser() {
                 onLoadEnd={() => {
                   if (isActive) {
                     setIsLoading(false);
-                    // 页面加载完成，淡入动画
-                    Animated.timing(webViewOpacity, {
-                      toValue: 1,
-                      duration: 300,
-                      useNativeDriver: true,
-                    }).start();
+                    webViewOpacity.setValue(1);
                   }
                 }}
                 allowsBackForwardNavigationGestures={true}
@@ -1617,28 +1599,10 @@ function TabCard({ tab, active, onSelect, onClose }: TabCardProps) {
   const handleSelectPress = () => {
     if (isSelecting.current) return;
     isSelecting.current = true;
-    
-    // 执行收缩到卡片状态的动画（标志着选择开始）
-    Animated.parallel([
-      Animated.timing(scale, {
-        toValue: 0.85,
-        duration: 120,
-        useNativeDriver: true,
-      }),
-      Animated.timing(opacity, {
-        toValue: 0.5,
-        duration: 120,
-        useNativeDriver: true,
-      }),
-    ]).start(() => {
-      // 调用父组件的 onSelect，父组件会处理展开动画
-      onSelect();
-      
-      // 重置标志和动画值
-      isSelecting.current = false;
-      scale.setValue(1);
-      opacity.setValue(1);
-    });
+
+    // 直接触发选择，不做任何动画，避免帧率下降
+    onSelect();
+    isSelecting.current = false;
   };
   
   // 手势响应器 - 上滑关闭
