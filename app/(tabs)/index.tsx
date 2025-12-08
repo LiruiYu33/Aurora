@@ -31,6 +31,7 @@ import type { WebViewNavigation } from 'react-native-webview/lib/WebViewTypes';
 
 import { ThemedText } from '@/components/themed-text';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { summariseWebView } from '@/services/SummariseService';
 
 // ==================== 类型定义 ====================
 type BrowserTab = {
@@ -196,6 +197,25 @@ export default function SimpleBrowser() {
   
   // 启动页 HTML 文件的本地 URI
   const [startPageUrl, setStartPageUrl] = useState<string | null>(null);
+  
+  // 总结状态
+  const [isSummarizing, setIsSummarizing] = useState(false);
+  const [summaryDrawerVisible, setSummaryDrawerVisible] = useState(false);
+  const [summaryContent, setSummaryContent] = useState<string>('');
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+  
+  // 下拉刷新/关闭状态
+  const [pullDownDistance, setPullDownDistance] = useState(0);
+  const pullDownY = useRef(new Animated.Value(0)).current;
+  const PULL_REFRESH_THRESHOLD = 80;  // 下拉刷新阈值
+  const PULL_CLOSE_THRESHOLD = 150;    // 下拉关闭阈值
+  
+  // API Key 、模型和设置面板状态
+  const [apiKey, setApiKey] = useState<string>('');
+  const [selectedModel, setSelectedModel] = useState<string>('Qwen/Qwen2.5-7B-Instruct');
+  const [isSettingsPanelVisible, setSettingsPanelVisible] = useState(false);
+  const API_KEY_STORAGE_KEY = 'browser.siliconflow.apikey.v1';
+  const MODEL_STORAGE_KEY = 'browser.siliconflow.model.v1';
 
   // 主题
   const colorScheme = useColorScheme();
@@ -224,8 +244,32 @@ export default function SimpleBrowser() {
       }
     };
     
+    const loadApiKey = async () => {
+      try {
+        const key = await AsyncStorage.getItem(API_KEY_STORAGE_KEY);
+        if (key) {
+          setApiKey(key);
+        }
+      } catch (e) {
+        console.warn('Failed to load API key', e);
+      }
+    };
+    
+    const loadModel = async () => {
+      try {
+        const model = await AsyncStorage.getItem(MODEL_STORAGE_KEY);
+        if (model) {
+          setSelectedModel(model);
+        }
+      } catch (e) {
+        console.warn('Failed to load model', e);
+      }
+    };
+    
     loadStartPage();
     loadBackgroundImage();
+    loadApiKey();
+    loadModel();
   }, []);
 
   // ==================== 派生状态（计算值） ====================
@@ -447,6 +491,71 @@ export default function SimpleBrowser() {
       }, 100);
     } catch (e) {
       console.warn('Failed to reset background image', e);
+    }
+  };
+  
+  /**
+   * 保存 API Key
+   */
+  const handleSaveApiKey = async (key: string) => {
+    try {
+      await AsyncStorage.setItem(API_KEY_STORAGE_KEY, key);
+      setApiKey(key);
+      Alert.alert('保存成功', 'API Key 已保存');
+      setSettingsPanelVisible(false);
+    } catch (e) {
+      Alert.alert('保存失败', '无法保存 API Key');
+    }
+  };
+  
+  /**
+   * 保存模型选择
+   */
+  const handleSaveModel = async (model: string) => {
+    try {
+      await AsyncStorage.setItem(MODEL_STORAGE_KEY, model);
+      setSelectedModel(model);
+    } catch (e) {
+      console.warn('Failed to save model', e);
+    }
+  };
+  
+  /**
+   * 总结当前网页
+   */
+  const handleSummarize = async () => {
+    if (!activeTab || activeTab.isStartPage) {
+      setSummaryError('启动页无需总结');
+      setSummaryDrawerVisible(true);
+      return;
+    }
+    
+    if (!apiKey) {
+      setSummaryError('请先设置 API Key\n点击设置按钮配置硅基流动 API Key');
+      setSummaryDrawerVisible(true);
+      return;
+    }
+    
+    if (isSummarizing) return;
+    
+    try {
+      setIsSummarizing(true);
+      setSummaryError(null);
+      setSummaryContent('');
+      setSummaryDrawerVisible(true);
+      
+      const summary = await summariseWebView(
+        webViewRef,
+        activeTab.url,
+        apiKey,
+        selectedModel
+      );
+      
+      setSummaryContent(summary);
+    } catch (error: any) {
+      setSummaryError(error.message || '总结失败\n请确保后端服务已启动');
+    } finally {
+      setIsSummarizing(false);
     }
   };
 
@@ -864,7 +973,7 @@ export default function SimpleBrowser() {
 
   /**
    * 处理 WebView 滚动事件的 JS 代码
-   * 注入到页面中监听滚动方向
+   * 注入到页面中监听滚动方向和下拉手势
    */
   const scrollListenerJS = `
     (function() {
@@ -898,6 +1007,42 @@ export default function SimpleBrowser() {
       let lastScrollY = 0;
       let ticking = false;
       
+      // 下拉刷新/关闭手势
+      let touchStartY = 0;
+      let isPulling = false;
+      
+      document.addEventListener('touchstart', function(e) {
+        if (window.scrollY === 0) {
+          touchStartY = e.touches[0].clientY;
+          isPulling = true;
+        }
+      }, { passive: true });
+      
+      document.addEventListener('touchmove', function(e) {
+        if (isPulling && window.scrollY === 0) {
+          const currentY = e.touches[0].clientY;
+          const pullDistance = currentY - touchStartY;
+          
+          if (pullDistance > 0) {
+            // 下拉中
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'pull',
+              distance: pullDistance
+            }));
+          }
+        }
+      }, { passive: true });
+      
+      document.addEventListener('touchend', function() {
+        if (isPulling) {
+          // 松手
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'pullEnd'
+          }));
+          isPulling = false;
+        }
+      }, { passive: true });
+      
       window.addEventListener('scroll', function() {
         if (!ticking) {
           window.requestAnimationFrame(function() {
@@ -923,13 +1068,38 @@ export default function SimpleBrowser() {
   `;
 
   /**
-   * 处理 WebView 发送的消息（滚动事件、启动页事件）
+   * 处理 WebView 发送的消息（滚动事件、启动页事件、下拉手势）
    */
   const handleWebViewMessage = (event: { nativeEvent: { data: string } }) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
       
-      if (data.type === 'scroll') {
+      if (data.type === 'pull') {
+        // 下拉中
+        setPullDownDistance(data.distance);
+        Animated.timing(pullDownY, {
+          toValue: Math.min(data.distance * 0.5, PULL_CLOSE_THRESHOLD),
+          duration: 0,
+          useNativeDriver: true,
+        }).start();
+      } else if (data.type === 'pullEnd') {
+        // 松手
+        const distance = pullDownDistance;
+        setPullDownDistance(0);
+        
+        Animated.spring(pullDownY, {
+          toValue: 0,
+          useNativeDriver: true,
+        }).start();
+        
+        if (distance >= PULL_CLOSE_THRESHOLD) {
+          // 关闭当前标签页
+          handleCloseTab(activeTabId);
+        } else if (distance >= PULL_REFRESH_THRESHOLD) {
+          // 刷新页面
+          webViewRef.current?.reload();
+        }
+      } else if (data.type === 'scroll') {
         // 如果正在导航中或在启动页，不响应滚动事件隐藏导航栏
         if (isNavigatingRef.current || activeTab?.isStartPage) {
           showNavBar(); // 保持导航栏显示
@@ -1077,20 +1247,22 @@ export default function SimpleBrowser() {
               accessibilityLabel="停止" 
               onPress={() => webViewRef.current?.stopLoading()} 
             />
+          ) : isSummarizing ? (
+            <ActivityIndicator size="small" color={isDark ? '#fff' : '#000'} />
           ) : (
             <ToolbarButton 
-              icon="refresh" 
-              accessibilityLabel="刷新" 
-              onPress={() => webViewRef.current?.reload()} 
+              icon="sparkles" 
+              accessibilityLabel="总结" 
+              onPress={handleSummarize} 
             />
           )}
         </View>
 
         <View style={styles.toolbar}>
           <ToolbarButton 
-            icon="add" 
-            accessibilityLabel="新标签页" 
-            onPress={() => handleNewTab(false)} 
+            icon="settings-outline" 
+            accessibilityLabel="设置" 
+            onPress={() => setSettingsPanelVisible(true)} 
           />
           <ToolbarButton 
             icon="share-outline" 
@@ -1214,6 +1386,32 @@ export default function SimpleBrowser() {
             <ThemedText style={styles.loaderText}>加载中…</ThemedText>
           </View>
         ) : null}
+        
+        {/* 下拉刷新/关闭提示 */}
+        {pullDownDistance > 0 && !activeTab?.isStartPage ? (
+          <Animated.View 
+            style={[
+              styles.pullDownHint,
+              { 
+                transform: [{ translateY: pullDownY }],
+                opacity: pullDownY.interpolate({
+                  inputRange: [0, 50],
+                  outputRange: [0, 1],
+                  extrapolate: 'clamp',
+                }),
+              }
+            ]}
+          >
+            <Ionicons 
+              name={pullDownDistance >= PULL_CLOSE_THRESHOLD ? 'close-circle' : 'refresh-circle'} 
+              size={32} 
+              color={pullDownDistance >= PULL_CLOSE_THRESHOLD ? '#ef4444' : '#4f46e5'} 
+            />
+            <ThemedText style={styles.pullDownText}>
+              {pullDownDistance >= PULL_CLOSE_THRESHOLD ? '松开关闭标签页' : '松开刷新页面'}
+            </ThemedText>
+          </Animated.View>
+        ) : null}
       </Animated.View>
 
       {/* 底部工具栏（地址栏 + 按钮），原生可用时使用 LiquidGlassView，否则回落到 BlurView */}
@@ -1245,6 +1443,29 @@ export default function SimpleBrowser() {
           isDark={colorScheme === 'dark'}
         />
       ) : null}
+      
+      {/* 设置面板（条件渲染） */}
+      {isSettingsPanelVisible ? (
+        <SettingsPanel
+          apiKey={apiKey}
+          selectedModel={selectedModel}
+          onSave={handleSaveApiKey}
+          onModelChange={handleSaveModel}
+          onDismiss={() => setSettingsPanelVisible(false)}
+          isDark={colorScheme === 'dark'}
+        />
+      ) : null}
+      
+      {/* 总结抽屉（条件渲染） */}
+      <SummaryDrawer
+        visible={summaryDrawerVisible}
+        content={summaryContent}
+        error={summaryError}
+        isLoading={isSummarizing}
+        onDismiss={() => setSummaryDrawerVisible(false)}
+        onShare={() => Share.share({ message: summaryContent })}
+        isDark={colorScheme === 'dark'}
+      />
     </View>
   );
 }
@@ -2053,6 +2274,191 @@ function BookmarksPanel({
   );
 }
 
+// ==================== 总结抽屉组件 ====================
+type SummaryDrawerProps = {
+  visible: boolean;
+  content: string;
+  error: string | null;
+  isLoading: boolean;
+  onDismiss: () => void;
+  onShare: () => void;
+  isDark: boolean;
+};
+
+/**
+ * 总结抽屉组件
+ * 从底部滑出显示总结结果
+ */
+function SummaryDrawer({
+  visible,
+  content,
+  error,
+  isLoading,
+  onDismiss,
+  onShare,
+  isDark,
+}: SummaryDrawerProps) {
+  if (!visible) return null;
+  
+  return (
+    <View style={styles.summaryOverlay}>
+      <Pressable style={styles.summaryBackdrop} onPress={onDismiss} />
+      
+      <View style={[styles.summaryDrawer, isDark && styles.summaryDrawerDark]}>
+        {/* 头部 */}
+        <View style={styles.summaryHeader}>
+          <ThemedText style={styles.summaryTitle}>网页总结</ThemedText>
+          <View style={styles.summaryHeaderButtons}>
+            {content && !error && (
+              <Pressable onPress={onShare} style={styles.summaryShareButton}>
+                <Ionicons name="share-outline" size={20} color={isDark ? '#fff' : '#000'} />
+              </Pressable>
+            )}
+            <Pressable onPress={onDismiss} style={styles.summaryCloseButton}>
+              <Ionicons name="close" size={24} color={isDark ? '#fff' : '#000'} />
+            </Pressable>
+          </View>
+        </View>
+        
+        {/* 内容 */}
+        <ScrollView style={styles.summaryContentScroll} showsVerticalScrollIndicator={true}>
+          {isLoading ? (
+            <View style={styles.summaryLoading}>
+              <ActivityIndicator size="large" color="#4f46e5" />
+              <ThemedText style={styles.summaryLoadingText}>正在总结...</ThemedText>
+            </View>
+          ) : error ? (
+            <View style={styles.summaryError}>
+              <Ionicons name="alert-circle" size={48} color="#ef4444" />
+              <ThemedText style={styles.summaryErrorText}>{error}</ThemedText>
+            </View>
+          ) : (
+            <ThemedText style={styles.summaryText}>{content}</ThemedText>
+          )}
+        </ScrollView>
+      </View>
+    </View>
+  );
+}
+
+// ==================== 设置面板组件 ====================
+// 硅基流动常用模型列表
+const AVAILABLE_MODELS = [
+  { id: 'Qwen/Qwen2.5-7B-Instruct', name: 'Qwen2.5-7B (推荐)' },
+  { id: 'Qwen/Qwen2.5-14B-Instruct', name: 'Qwen2.5-14B' },
+  { id: 'Qwen/Qwen2.5-32B-Instruct', name: 'Qwen2.5-32B' },
+  { id: 'Qwen/Qwen2.5-72B-Instruct', name: 'Qwen2.5-72B' },
+  { id: 'deepseek-ai/DeepSeek-V2.5', name: 'DeepSeek-V2.5' },
+  { id: 'THUDM/glm-4-9b-chat', name: 'GLM-4-9B' },
+  { id: '01-ai/Yi-1.5-9B-Chat', name: 'Yi-1.5-9B' },
+];
+
+type SettingsPanelProps = {
+  apiKey: string;
+  selectedModel: string;
+  onSave: (key: string) => void;
+  onModelChange: (model: string) => void;
+  onDismiss: () => void;
+  isDark: boolean;
+};
+
+/**
+ * 设置面板组件
+ * 用于配置硅基流动 API Key 和模型选择
+ */
+function SettingsPanel({
+  apiKey,
+  selectedModel,
+  onSave,
+  onModelChange,
+  onDismiss,
+  isDark,
+}: SettingsPanelProps) {
+  const [inputValue, setInputValue] = useState(apiKey);
+  
+  const handleSave = () => {
+    if (!inputValue.trim()) {
+      Alert.alert('提示', '请输入 API Key');
+      return;
+    }
+    onSave(inputValue.trim());
+  };
+  
+  return (
+    <View style={styles.bookmarksOverlay}>
+      <BlurView
+        intensity={80}
+        tint={isDark ? 'dark' : 'light'}
+        style={StyleSheet.absoluteFill}
+      />
+      
+      {/* 设置面板 */}
+      <View style={[styles.bookmarksPanel, isDark && styles.bookmarksPanelDark]}>
+        {/* 头部 */}
+        <View style={styles.bookmarksHeader}>
+          <Pressable onPress={onDismiss} style={styles.bookmarksDoneButton}>
+            <ThemedText style={styles.bookmarksDoneText}>取消</ThemedText>
+          </Pressable>
+          
+          <ThemedText style={styles.bookmarksTitle}>设置</ThemedText>
+          
+          <Pressable onPress={handleSave} style={styles.bookmarksDoneButton}>
+            <ThemedText style={[styles.bookmarksDoneText, { color: '#007AFF' }]}>保存</ThemedText>
+          </Pressable>
+        </View>
+        
+        {/* 设置内容 */}
+        <ScrollView style={styles.settingsContent} showsVerticalScrollIndicator={false}>
+          <View style={styles.settingItem}>
+            <ThemedText style={styles.settingLabel}>硅基流动 API Key</ThemedText>
+            <TextInput
+              style={[
+                styles.settingInput,
+                isDark && styles.settingInputDark,
+              ]}
+              value={inputValue}
+              onChangeText={setInputValue}
+              placeholder="请输入 API Key (sk-...)"
+              placeholderTextColor={isDark ? '#64748b' : '#94a3b8'}
+              autoCapitalize="none"
+              autoCorrect={false}
+              secureTextEntry={false}
+            />
+            <ThemedText style={styles.settingHint}>
+              在硅基流动官网获取 API Key 后填入此处
+            </ThemedText>
+          </View>
+          
+          <View style={styles.settingItem}>
+            <ThemedText style={styles.settingLabel}>AI 模型</ThemedText>
+            {AVAILABLE_MODELS.map((model) => (
+              <Pressable
+                key={model.id}
+                style={[
+                  styles.modelOption,
+                  isDark && styles.modelOptionDark,
+                  selectedModel === model.id && styles.modelOptionSelected,
+                ]}
+                onPress={() => onModelChange(model.id)}
+              >
+                <View style={styles.modelOptionContent}>
+                  <ThemedText style={styles.modelOptionText}>{model.name}</ThemedText>
+                  {selectedModel === model.id && (
+                    <Ionicons name="checkmark-circle" size={20} color="#4f46e5" />
+                  )}
+                </View>
+              </Pressable>
+            ))}
+            <ThemedText style={styles.settingHint}>
+              不同模型的性能和响应速度不同
+            </ThemedText>
+          </View>
+        </ScrollView>
+      </View>
+    </View>
+  );
+}
+
 // ==================== 样式定义 ====================
 /**
  * StyleSheet.create() 创建样式表对象
@@ -2221,6 +2627,21 @@ const styles = StyleSheet.create({
   },
   loaderText: {
     fontSize: 14,
+    color: '#475569',
+  },
+  pullDownHint: {
+    position: 'absolute',
+    top: 80,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    zIndex: 10,
+  },
+  pullDownText: {
+    fontSize: 14,
+    fontWeight: '600',
     color: '#475569',
   },
   bottomDock: {
@@ -2728,5 +3149,138 @@ const styles = StyleSheet.create({
   bookmarkDeleteButton: {
     padding: 8,
     marginLeft: 8,
+  },
+  // ==================== 设置面板样式 ====================
+  settingsContent: {
+    padding: 20,
+    gap: 20,
+  },
+  settingItem: {
+    gap: 12,
+  },
+  settingLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  settingInput: {
+    backgroundColor: '#f1f5f9',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: '#000',
+  },
+  settingInputDark: {
+    backgroundColor: '#1e293b',
+    color: '#fff',
+  },
+  settingHint: {
+    fontSize: 13,
+    color: '#64748b',
+  },
+  modelOption: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    marginBottom: 8,
+  },
+  modelOptionDark: {
+    backgroundColor: '#2c2c2e',
+  },
+  modelOptionSelected: {
+    backgroundColor: '#eef2ff',
+    borderWidth: 1,
+    borderColor: '#4f46e5',
+  },
+  modelOptionContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  modelOptionText: {
+    fontSize: 15,
+    fontWeight: '500',
+  },
+  // ==================== 总结抽屉样式 ====================
+  summaryOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'flex-end',
+    zIndex: 1000,
+  },
+  summaryBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  },
+  summaryDrawer: {
+    height: '50%',
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingTop: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 10,
+  },
+  summaryDrawerDark: {
+    backgroundColor: '#1c1c1e',
+  },
+  summaryHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingBottom: 16,
+    borderBottomWidth: 0.5,
+    borderBottomColor: 'rgba(0, 0, 0, 0.1)',
+  },
+  summaryTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  summaryHeaderButtons: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  summaryShareButton: {
+    padding: 4,
+  },
+  summaryCloseButton: {
+    padding: 4,
+  },
+  summaryContentScroll: {
+    flex: 1,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+  },
+  summaryLoading: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 60,
+  },
+  summaryLoadingText: {
+    fontSize: 15,
+    color: '#64748b',
+  },
+  summaryError: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 16,
+    paddingVertical: 60,
+  },
+  summaryErrorText: {
+    fontSize: 15,
+    color: '#ef4444',
+    textAlign: 'center',
+  },
+  summaryText: {
+    fontSize: 16,
+    lineHeight: 24,
+    paddingBottom: 40,
   },
 });
