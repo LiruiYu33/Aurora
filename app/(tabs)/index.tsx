@@ -62,8 +62,27 @@ const EXTRACT_CONTENT_SCRIPT = `
   try {
     // 移除脚本、样式等标签
     const clone = document.body.cloneNode(true);
-    const scripts = clone.querySelectorAll('script, style, noscript');
+    const scripts = clone.querySelectorAll('script, style, noscript, iframe, svg');
     scripts.forEach(el => el.remove());
+    
+    // 处理图片：将有意义的图片转换为文本描述
+    const images = clone.querySelectorAll('img');
+    images.forEach(img => {
+      const alt = img.alt || img.title;
+      if (alt && alt.length > 2) {
+        const textNode = document.createTextNode(\` [图片: \${alt}] \`);
+        img.parentNode.replaceChild(textNode, img);
+      } else {
+        img.remove();
+      }
+    });
+
+    // 处理视频：标记视频位置
+    const videos = clone.querySelectorAll('video');
+    videos.forEach(video => {
+      const textNode = document.createTextNode(' [视频内容] ');
+      video.parentNode.replaceChild(textNode, video);
+    });
     
     // 获取纯文本
     let text = clone.innerText || clone.textContent || '';
