@@ -138,7 +138,7 @@ const formatInput = (rawValue: string) => {
 const SWIPE_MIN_DRAG = 0;              // 识别向上滑动的最小距离，0=任何向上移动都响应
 const SWIPE_DIRECTION_RATIO = 0;       // 横向/纵向的容错比，0=只要有向上分量就拦截（未使用，保留）
 const SWIPE_RELEASE_VELOCITY = 0;      // 松手时的向上速度阈值，0=任何向上速度都触发
-const SWIPE_CLOSE_DISTANCE = 150;      // 上滑超过该距离即可判定关闭（越小越容易关闭，建议50-150）
+const SWIPE_CLOSE_DISTANCE = 100;      // 上滑超过该距离即可判定关闭（越小越容易关闭，建议50-150）
 
 // ==================== 标签页切换器布局常量 ====================
 // 调整这个值来控制左右标签页的间距，越小越近（可以看到更多相邻卡片）
@@ -174,6 +174,8 @@ export default function SimpleBrowser() {
   
   // isSwitcherVisible: 标签页切换器是否可见（全屏浮层）
   const [isSwitcherVisible, setSwitcherVisible] = useState(false);
+  // shouldDismissSwitcher: 触发标签页切换器关闭动画
+  const [shouldDismissSwitcher, setShouldDismissSwitcher] = useState(false);
   
   // canGoBack: 当前页面是否可以后退
   const [canGoBack, setCanGoBack] = useState(false);
@@ -204,11 +206,10 @@ export default function SimpleBrowser() {
   const [summaryContent, setSummaryContent] = useState<string>('');
   const [summaryError, setSummaryError] = useState<string | null>(null);
   
-  // 下拉刷新/关闭状态
+  // 下拉刷新状态
   const [pullDownDistance, setPullDownDistance] = useState(0);
   const pullDownY = useRef(new Animated.Value(0)).current;
-  const PULL_REFRESH_THRESHOLD = 80;  // 下拉刷新阈值
-  const PULL_CLOSE_THRESHOLD = 150;    // 下拉关闭阈值
+  const PULL_REFRESH_THRESHOLD = 300;  // 下拉刷新阈值（单位：像素）
   
   // API Key 、模型和设置面板状态
   const [apiKey, setApiKey] = useState<string>('');
@@ -796,6 +797,14 @@ export default function SimpleBrowser() {
     // 格式化输入为完整 URL
     const target = formatInput(activeTab.input);
     
+    // 如果目标URL与当前URL相同，只需重新加载页面
+    if (target === activeTab.url) {
+      webViewRef.current?.reload();
+      // 更新输入框显示为规范化的URL
+      updateTab(activeTab.id, { input: target });
+      return;
+    }
+    
     // 导航前淡出动画
     Animated.timing(webViewOpacity, {
       toValue: 0.6,
@@ -1007,39 +1016,86 @@ export default function SimpleBrowser() {
       let lastScrollY = 0;
       let ticking = false;
       
-      // 下拉刷新/关闭手势
+      // 下拉刷新手势
       let touchStartY = 0;
-      let isPulling = false;
+      let touchStartX = 0;
+      let touchStartScrollY = 0;
+      let pullStartY = 0;
+      let accumulatedPull = 0;
+      let isTracking = false;
       
       document.addEventListener('touchstart', function(e) {
-        if (window.scrollY === 0) {
-          touchStartY = e.touches[0].clientY;
-          isPulling = true;
-        }
+        touchStartY = e.touches[0].clientY;
+        touchStartX = e.touches[0].clientX;
+        touchStartScrollY = window.scrollY;
+        isTracking = false;
+        accumulatedPull = 0;
       }, { passive: true });
       
       document.addEventListener('touchmove', function(e) {
-        if (isPulling && window.scrollY === 0) {
-          const currentY = e.touches[0].clientY;
-          const pullDistance = currentY - touchStartY;
+        const currentY = e.touches[0].clientY;
+        const currentX = e.touches[0].clientX;
+        const currentScrollY = window.scrollY;
+        
+        // 宽松的顶部检测
+        const isAtTop = currentScrollY <= 10;
+        const startedAtTop = touchStartScrollY <= 10;
+        
+        if (!isTracking) {
+          const dy = currentY - touchStartY;
+          const dx = currentX - touchStartX;
           
-          if (pullDistance > 0) {
-            // 下拉中
+          // 只有当页面处于顶部，且手势开始时也在顶部时，才允许下拉刷新
+          // 这避免了从页面中部向上滚动到顶部时误触发
+          // 同时满足用户要求的"网页没有被拖动"（即scroll位置未变）的前提
+          if (startedAtTop && isAtTop && dy > 0 && Math.abs(dy) > Math.abs(dx)) {
+             if (dy > 5) {
+               isTracking = true;
+               pullStartY = currentY;
+             }
+          }
+        }
+        
+        if (isTracking) {
+          // 如果页面发生了明显的向下滚动（离开了顶部区域），说明用户意图是滚动网页
+          // 此时必须取消下拉刷新，满足"网页被拖动...不能启用"的要求
+          if (currentScrollY > 10) {
+            isTracking = false;
+            accumulatedPull = 0;
+            window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'pullCancel' }));
+            return;
+          }
+          
+          const rawPull = currentY - pullStartY;
+          accumulatedPull = Math.max(0, rawPull);
+          
+          if (accumulatedPull > 0) {
             window.ReactNativeWebView.postMessage(JSON.stringify({
               type: 'pull',
-              distance: pullDistance
+              distance: accumulatedPull
             }));
           }
         }
       }, { passive: true });
       
       document.addEventListener('touchend', function() {
-        if (isPulling) {
-          // 松手
-          window.ReactNativeWebView.postMessage(JSON.stringify({
-            type: 'pullEnd'
-          }));
-          isPulling = false;
+        if (isTracking) {
+          if (accumulatedPull > 0) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'pullEnd',
+              distance: accumulatedPull
+            }));
+          }
+          isTracking = false;
+          accumulatedPull = 0;
+        }
+      }, { passive: true });
+      
+      document.addEventListener('touchcancel', function() {
+        if (isTracking) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'pullCancel' }));
+          isTracking = false;
+          accumulatedPull = 0;
         }
       }, { passive: true });
       
@@ -1076,29 +1132,41 @@ export default function SimpleBrowser() {
       
       if (data.type === 'pull') {
         // 下拉中
+        console.log('Pull distance:', data.distance);
         setPullDownDistance(data.distance);
         Animated.timing(pullDownY, {
-          toValue: Math.min(data.distance * 0.5, PULL_CLOSE_THRESHOLD),
+          toValue: Math.min(data.distance * 0.4, 60),
           duration: 0,
           useNativeDriver: true,
         }).start();
       } else if (data.type === 'pullEnd') {
-        // 松手
-        const distance = pullDownDistance;
+        // 松手 - 使用传递的距离而不是状态中的距离
+        const distance = data.distance || pullDownDistance;
+        console.log('Pull end, distance:', distance, 'refresh threshold:', PULL_REFRESH_THRESHOLD);
+        
         setPullDownDistance(0);
         
         Animated.spring(pullDownY, {
           toValue: 0,
           useNativeDriver: true,
+          friction: 7,
+          tension: 40,
         }).start();
         
-        if (distance >= PULL_CLOSE_THRESHOLD) {
-          // 关闭当前标签页
-          handleCloseTab(activeTabId);
-        } else if (distance >= PULL_REFRESH_THRESHOLD) {
+        if (distance >= PULL_REFRESH_THRESHOLD) {
           // 刷新页面
+          console.log('Reloading page');
           webViewRef.current?.reload();
+        } else {
+          console.log('Distance too short, no action');
         }
+      } else if (data.type === 'pullCancel') {
+        // 取消下拉
+        setPullDownDistance(0);
+        Animated.spring(pullDownY, {
+          toValue: 0,
+          useNativeDriver: true,
+        }).start();
       } else if (data.type === 'scroll') {
         // 如果正在导航中或在启动页，不响应滚动事件隐藏导航栏
         if (isNavigatingRef.current || activeTab?.isStartPage) {
@@ -1286,8 +1354,14 @@ export default function SimpleBrowser() {
             icon="layers-outline" 
             accessibilityLabel="标签页" 
             onPress={async () => {
-              await captureCurrentTabSnapshot();
-              setSwitcherVisible(true);
+              if (isSwitcherVisible) {
+                // 如果切换器已显示，触发关闭动画
+                setShouldDismissSwitcher(true);
+              } else {
+                // 如果切换器未显示，截图并打开它
+                await captureCurrentTabSnapshot();
+                setSwitcherVisible(true);
+              }
             }}
             onLongPress={handleTabButtonLongPress}
           />
@@ -1350,6 +1424,17 @@ export default function SimpleBrowser() {
                     webViewOpacity.setValue(1);
                   }
                 }}
+                onError={(syntheticEvent) => {
+                  const { nativeEvent } = syntheticEvent;
+                  console.warn('WebView error:', nativeEvent);
+                  if (isActive) {
+                    setIsLoading(false);
+                  }
+                }}
+                onHttpError={(syntheticEvent) => {
+                  const { nativeEvent } = syntheticEvent;
+                  console.warn('WebView HTTP error:', nativeEvent);
+                }}
                 allowsBackForwardNavigationGestures={true}
                 allowsInlineMediaPlayback={true}
                 injectedJavaScript={scrollListenerJS}
@@ -1359,6 +1444,13 @@ export default function SimpleBrowser() {
                 allowFileAccess={true}
                 allowFileAccessFromFileURLs={true}
                 allowUniversalAccessFromFileURLs={true}
+                javaScriptEnabled={true}
+                domStorageEnabled={true}
+                sharedCookiesEnabled={true}
+                thirdPartyCookiesEnabled={true}
+                cacheEnabled={true}
+                startInLoadingState={false}
+                mixedContentMode="always"
               />
             </Animated.View>
           );
@@ -1387,7 +1479,7 @@ export default function SimpleBrowser() {
           </View>
         ) : null}
         
-        {/* 下拉刷新/关闭提示 */}
+        {/* 下拉刷新提示 */}
         {pullDownDistance > 0 && !activeTab?.isStartPage ? (
           <Animated.View 
             style={[
@@ -1395,7 +1487,7 @@ export default function SimpleBrowser() {
               { 
                 transform: [{ translateY: pullDownY }],
                 opacity: pullDownY.interpolate({
-                  inputRange: [0, 50],
+                  inputRange: [0, 30],
                   outputRange: [0, 1],
                   extrapolate: 'clamp',
                 }),
@@ -1403,12 +1495,12 @@ export default function SimpleBrowser() {
             ]}
           >
             <Ionicons 
-              name={pullDownDistance >= PULL_CLOSE_THRESHOLD ? 'close-circle' : 'refresh-circle'} 
+              name={pullDownDistance > PULL_REFRESH_THRESHOLD ? 'checkmark-circle' : 'arrow-down-circle'} 
               size={32} 
-              color={pullDownDistance >= PULL_CLOSE_THRESHOLD ? '#ef4444' : '#4f46e5'} 
+              color={pullDownDistance > PULL_REFRESH_THRESHOLD ? '#10b981' : '#94a3b8'} 
             />
             <ThemedText style={styles.pullDownText}>
-              {pullDownDistance >= PULL_CLOSE_THRESHOLD ? '松开关闭标签页' : '松开刷新页面'}
+              {pullDownDistance > PULL_REFRESH_THRESHOLD ? '松开刷新' : '下拉刷新'}
             </ThemedText>
           </Animated.View>
         ) : null}
@@ -1426,7 +1518,11 @@ export default function SimpleBrowser() {
           onSelect={handleSelectTab}           // 选择标签页回调
           onCloseTab={handleCloseTab}          // 关闭标签页回调
           onAddTab={handleNewTab}              // 新建标签页回调
-          onDismiss={() => setSwitcherVisible(false)}  // 关闭切换器回调
+          onDismiss={() => {
+            setSwitcherVisible(false);
+            setShouldDismissSwitcher(false);
+          }}  // 关闭切换器回调
+          shouldDismiss={shouldDismissSwitcher}  // 触发关闭动画
         />
       ) : null}
 
@@ -1982,13 +2078,14 @@ type TabSwitcherProps = {
   onCloseTab: (tabId: string, stayInSwitcher?: boolean) => void;
   onAddTab: (stayInSwitcher?: boolean) => void;
   onDismiss: () => void;
+  shouldDismiss?: boolean;
 };
 
 /**
  * 标签页切换器组件
  * 全屏浮层，支持左右滑动切换、上滑关闭标签页
  */
-function TabSwitcher({ tabs, activeTabId, onSelect, onCloseTab, onAddTab, onDismiss }: TabSwitcherProps) {
+function TabSwitcher({ tabs, activeTabId, onSelect, onCloseTab, onAddTab, onDismiss, shouldDismiss }: TabSwitcherProps) {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
   
@@ -2057,6 +2154,13 @@ function TabSwitcher({ tabs, activeTabId, onSelect, onCloseTab, onAddTab, onDism
       onDismiss();
     });
   };
+  
+  // 监听外部触发的关闭请求
+  useEffect(() => {
+    if (shouldDismiss) {
+      handleDismissWithAnim();
+    }
+  }, [shouldDismiss]);
   
   // 计算单个卡片的滚动宽度
   const cardScrollWidth = SCREEN_WIDTH * TAB_CARD_SPACING;
