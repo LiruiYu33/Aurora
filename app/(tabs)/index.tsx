@@ -16,6 +16,7 @@ import {
   Easing,
   Image,
   Keyboard,
+  KeyboardAvoidingView,
   PanResponder,
   Platform,
   Pressable,
@@ -2535,7 +2536,6 @@ const AVAILABLE_MODELS = [
   { id: 'Qwen/Qwen2.5-72B-Instruct', name: 'Qwen2.5-72B' },
   { id: 'deepseek-ai/DeepSeek-V2.5', name: 'DeepSeek-V2.5' },
   { id: 'THUDM/glm-4-9b-chat', name: 'GLM-4-9B' },
-  { id: '01-ai/Yi-1.5-9B-Chat', name: 'Yi-1.5-9B' },
 ];
 
 type SettingsPanelProps = {
@@ -2559,15 +2559,113 @@ function SettingsPanel({
   onDismiss,
   isDark,
 }: SettingsPanelProps) {
+  const [currentView, setCurrentView] = useState<'main' | 'siliconflow'>('main');
   const [inputValue, setInputValue] = useState(apiKey);
   
-  const handleSave = () => {
+  const handleSaveSiliconFlow = () => {
     if (!inputValue.trim()) {
       Alert.alert('提示', '请输入 API Key');
       return;
     }
     onSave(inputValue.trim());
   };
+
+  const renderMainView = () => (
+    <ScrollView 
+      style={{ flex: 1 }}
+      contentContainerStyle={styles.settingsContent} 
+      showsVerticalScrollIndicator={false}
+    >
+      <ThemedText style={styles.settingSectionTitle}>AI 服务提供商</ThemedText>
+      
+      <Pressable
+        style={[styles.providerCard, isDark && styles.providerCardDark]}
+        onPress={() => setCurrentView('siliconflow')}
+      >
+        <View style={styles.providerIconContainer}>
+          <Ionicons name="hardware-chip-outline" size={24} color="#4f46e5" />
+        </View>
+        <View style={styles.providerInfo}>
+          <ThemedText style={styles.providerName}>硅基流动 (SiliconFlow)</ThemedText>
+          <ThemedText style={styles.providerDesc}>提供 Qwen, Yi, DeepSeek 等高性能模型</ThemedText>
+        </View>
+        <Ionicons name="chevron-forward" size={20} color={isDark ? '#64748b' : '#94a3b8'} />
+      </Pressable>
+    </ScrollView>
+  );
+
+  const renderSiliconFlowView = () => (
+    <ScrollView 
+      style={{ flex: 1 }}
+      contentContainerStyle={[styles.settingsContent, { paddingBottom: 100 }]} 
+      showsVerticalScrollIndicator={false}
+      keyboardDismissMode="on-drag"
+    >
+      <View style={styles.settingItem}>
+        <ThemedText style={styles.settingLabel}>硅基流动 API Key</ThemedText>
+        <TextInput
+          style={[
+            styles.settingInput,
+            isDark && styles.settingInputDark,
+          ]}
+          value={inputValue}
+          onChangeText={setInputValue}
+          placeholder="请输入 API Key (sk-...)"
+          placeholderTextColor={isDark ? '#64748b' : '#94a3b8'}
+          autoCapitalize="none"
+          autoCorrect={false}
+          secureTextEntry={false}
+        />
+        <ThemedText style={styles.settingHint}>
+          在硅基流动官网获取 API Key 后填入此处
+        </ThemedText>
+      </View>
+      
+      <View style={styles.settingItem}>
+        <ThemedText style={styles.settingLabel}>AI 模型</ThemedText>
+        {AVAILABLE_MODELS.map((model) => (
+          <Pressable
+            key={model.id}
+            style={[
+              styles.modelOption,
+              isDark && styles.modelOptionDark,
+              selectedModel === model.id && styles.modelOptionSelected,
+            ]}
+            onPress={() => onModelChange(model.id)}
+          >
+            <View style={styles.modelOptionContent}>
+              <ThemedText style={styles.modelOptionText}>{model.name}</ThemedText>
+              {selectedModel === model.id && (
+                <Ionicons name="checkmark-circle" size={20} color="#4f46e5" />
+              )}
+            </View>
+          </Pressable>
+        ))}
+        <ThemedText style={styles.settingHint}>
+          不同模型的性能和响应速度不同
+        </ThemedText>
+        
+        <View style={{ marginTop: 12 }}>
+          <ThemedText style={styles.settingLabel}>手动输入模型 ID</ThemedText>
+          <TextInput
+            style={[
+              styles.settingInput,
+              isDark && styles.settingInputDark,
+            ]}
+            value={selectedModel}
+            onChangeText={onModelChange}
+            placeholder="例如: 01-ai/Yi-1.5-9B-Chat"
+            placeholderTextColor={isDark ? '#64748b' : '#94a3b8'}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          <ThemedText style={styles.settingHint}>
+            可在此处输入未列出的模型 ID
+          </ThemedText>
+        </View>
+      </View>
+    </ScrollView>
+  );
   
   return (
     <View style={styles.bookmarksOverlay}>
@@ -2577,69 +2675,44 @@ function SettingsPanel({
         style={StyleSheet.absoluteFill}
       />
       
-      {/* 设置面板 */}
-      <View style={[styles.bookmarksPanel, isDark && styles.bookmarksPanelDark]}>
-        {/* 头部 */}
-        <View style={styles.bookmarksHeader}>
-          <Pressable onPress={onDismiss} style={styles.bookmarksDoneButton}>
-            <ThemedText style={styles.bookmarksDoneText}>取消</ThemedText>
-          </Pressable>
-          
-          <ThemedText style={styles.bookmarksTitle}>设置</ThemedText>
-          
-          <Pressable onPress={handleSave} style={styles.bookmarksDoneButton}>
-            <ThemedText style={[styles.bookmarksDoneText, { color: '#007AFF' }]}>保存</ThemedText>
-          </Pressable>
-        </View>
-        
-        {/* 设置内容 */}
-        <ScrollView style={styles.settingsContent} showsVerticalScrollIndicator={false}>
-          <View style={styles.settingItem}>
-            <ThemedText style={styles.settingLabel}>硅基流动 API Key</ThemedText>
-            <TextInput
-              style={[
-                styles.settingInput,
-                isDark && styles.settingInputDark,
-              ]}
-              value={inputValue}
-              onChangeText={setInputValue}
-              placeholder="请输入 API Key (sk-...)"
-              placeholderTextColor={isDark ? '#64748b' : '#94a3b8'}
-              autoCapitalize="none"
-              autoCorrect={false}
-              secureTextEntry={false}
-            />
-            <ThemedText style={styles.settingHint}>
-              在硅基流动官网获取 API Key 后填入此处
-            </ThemedText>
-          </View>
-          
-          <View style={styles.settingItem}>
-            <ThemedText style={styles.settingLabel}>AI 模型</ThemedText>
-            {AVAILABLE_MODELS.map((model) => (
-              <Pressable
-                key={model.id}
-                style={[
-                  styles.modelOption,
-                  isDark && styles.modelOptionDark,
-                  selectedModel === model.id && styles.modelOptionSelected,
-                ]}
-                onPress={() => onModelChange(model.id)}
-              >
-                <View style={styles.modelOptionContent}>
-                  <ThemedText style={styles.modelOptionText}>{model.name}</ThemedText>
-                  {selectedModel === model.id && (
-                    <Ionicons name="checkmark-circle" size={20} color="#4f46e5" />
-                  )}
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={{ flex: 1 }}
+      >
+        {/* 设置面板 */}
+        <View style={[styles.bookmarksPanel, isDark && styles.bookmarksPanelDark]}>
+          {/* 头部 */}
+          <View style={styles.bookmarksHeader}>
+            {currentView === 'main' ? (
+              <Pressable onPress={onDismiss} style={styles.bookmarksDoneButton}>
+                <ThemedText style={styles.bookmarksDoneText}>完成</ThemedText>
+              </Pressable>
+            ) : (
+              <Pressable onPress={() => setCurrentView('main')} style={styles.bookmarksDoneButton}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Ionicons name="chevron-back" size={24} color="#007AFF" />
+                  <ThemedText style={styles.bookmarksDoneText}>返回</ThemedText>
                 </View>
               </Pressable>
-            ))}
-            <ThemedText style={styles.settingHint}>
-              不同模型的性能和响应速度不同
+            )}
+            
+            <ThemedText style={styles.bookmarksTitle}>
+              {currentView === 'main' ? '设置' : '硅基流动'}
             </ThemedText>
+            
+            {currentView === 'siliconflow' ? (
+              <Pressable onPress={handleSaveSiliconFlow} style={styles.bookmarksDoneButton}>
+                <ThemedText style={[styles.bookmarksDoneText, { color: '#007AFF' }]}>保存</ThemedText>
+              </Pressable>
+            ) : (
+              <View style={styles.bookmarksDoneButton} />
+            )}
           </View>
-        </ScrollView>
-      </View>
+          
+          {/* 内容区域 */}
+          {currentView === 'main' ? renderMainView() : renderSiliconFlowView()}
+        </View>
+      </KeyboardAvoidingView>
     </View>
   );
 }
@@ -3339,6 +3412,45 @@ const styles = StyleSheet.create({
   settingsContent: {
     padding: 20,
     gap: 20,
+  },
+  settingSectionTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#64748b',
+    marginBottom: 8,
+    marginLeft: 4,
+    textTransform: 'uppercase',
+  },
+  providerCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f8fafc',
+    padding: 16,
+    borderRadius: 16,
+    gap: 12,
+  },
+  providerCardDark: {
+    backgroundColor: '#2c2c2e',
+  },
+  providerIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#eef2ff',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  providerInfo: {
+    flex: 1,
+    gap: 4,
+  },
+  providerName: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  providerDesc: {
+    fontSize: 12,
+    color: '#64748b',
   },
   settingItem: {
     gap: 12,
