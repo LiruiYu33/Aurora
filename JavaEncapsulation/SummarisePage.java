@@ -95,13 +95,9 @@ public class SummarisePage {
     }
     
     /**
-     * 对话服务
-     * @param messages 完整对话历史
-     * @param apiKey API Key
-     * @param model 模型名称
-     * @return AI 回复
+     * 对话服务 - 硅基流动
      */
-    public static String chat(JSONArray messages, String apiKey, String model) throws Exception {
+    public static String chatSiliconFlow(JSONArray messages, String apiKey, String model) throws Exception {
         if (apiKey == null || apiKey.isEmpty()) {
             throw new Exception("API Key 未提供");
         }
@@ -150,6 +146,193 @@ public class SummarisePage {
             .getJSONObject("message")
             .getString("content");
     }
+
+    /**
+     * 对话服务 - RAGFlow
+     */
+    public static String chatRagFlow(JSONArray messages, String apiKey, String baseUrl) throws Exception {
+        if (apiKey == null || apiKey.isEmpty()) {
+            throw new Exception("RAGFlow API Key 未提供");
+        }
+        if (baseUrl == null || baseUrl.isEmpty()) {
+            throw new Exception("RAGFlow Base URL 未提供");
+        }
+
+        // 移除末尾斜杠
+        if (baseUrl.endsWith("/")) {
+            baseUrl = baseUrl.substring(0, baseUrl.length() - 1);
+        }
+
+        String targetUrl = null;
+        String chatId = null;
+        String agentId = null;
+
+        // 1. 尝试获取 Chat ID
+        try {
+            URL chatsUrl = new URL(baseUrl + "/api/v1/chats?page=1&page_size=1");
+            HttpURLConnection chatsConn = (HttpURLConnection) chatsUrl.openConnection();
+            chatsConn.setRequestMethod("GET");
+            chatsConn.setRequestProperty("Authorization", "Bearer " + apiKey);
+            chatsConn.setConnectTimeout(5000);
+            chatsConn.setReadTimeout(5000);
+            
+            if (chatsConn.getResponseCode() == 200) {
+                StringBuilder chatsResponse = new StringBuilder();
+                try (BufferedReader br = new BufferedReader(
+                        new InputStreamReader(chatsConn.getInputStream(), StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = br.readLine()) != null) {
+                        chatsResponse.append(line);
+                    }
+                }
+                JSONObject chatsJson = new JSONObject(chatsResponse.toString());
+                if (chatsJson.has("data") && !chatsJson.isNull("data")) {
+                    JSONArray data = chatsJson.getJSONArray("data");
+                    if (data.length() > 0) {
+                        chatId = data.getJSONObject(0).getString("id");
+                        System.out.println("Found RAGFlow Chat ID: " + chatId);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.out.println("Failed to fetch RAGFlow chats: " + e.getMessage());
+        }
+
+        if (chatId != null) {
+            targetUrl = baseUrl + "/api/v1/chats_openai/" + chatId + "/chat/completions";
+        } else {
+            // 2. 尝试获取 Agent ID
+            try {
+                URL agentsUrl = new URL(baseUrl + "/api/v1/agents?page=1&page_size=1");
+                HttpURLConnection agentsConn = (HttpURLConnection) agentsUrl.openConnection();
+                agentsConn.setRequestMethod("GET");
+                agentsConn.setRequestProperty("Authorization", "Bearer " + apiKey);
+                agentsConn.setConnectTimeout(5000);
+                agentsConn.setReadTimeout(5000);
+                
+                if (agentsConn.getResponseCode() == 200) {
+                    StringBuilder agentsResponse = new StringBuilder();
+                    try (BufferedReader br = new BufferedReader(
+                            new InputStreamReader(agentsConn.getInputStream(), StandardCharsets.UTF_8))) {
+                        String line;
+                        while ((line = br.readLine()) != null) {
+                            agentsResponse.append(line);
+                        }
+                    }
+                    JSONObject agentsJson = new JSONObject(agentsResponse.toString());
+                    if (agentsJson.has("data") && !agentsJson.isNull("data")) {
+                        JSONArray data = agentsJson.getJSONArray("data");
+                        if (data.length() > 0) {
+                            agentId = data.getJSONObject(0).getString("id");
+                            System.out.println("Found RAGFlow Agent ID: " + agentId);
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                System.out.println("Failed to fetch RAGFlow agents: " + e.getMessage());
+            }
+            
+            if (agentId != null) {
+                targetUrl = baseUrl + "/api/v1/agents_openai/" + agentId + "/chat/completions";
+            } else {
+                // 3. 最后的尝试，使用默认路径 (可能会 404)
+                targetUrl = baseUrl + "/api/v1/chat/completions";
+                System.out.println("No Chat or Agent found, using default URL: " + targetUrl);
+            }
+        }
+
+        System.out.println("Target RAGFlow URL: " + targetUrl);
+
+        // 构造请求体
+        JSONObject requestBody = new JSONObject();
+        requestBody.put("stream", false);
+        requestBody.put("messages", messages);
+        requestBody.put("model", "ragflow"); 
+
+        URL url = new URL(targetUrl);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("POST");
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+        conn.setDoOutput(true);
+        
+        try (OutputStream os = conn.getOutputStream()) {
+            byte[] input = requestBody.toString().getBytes(StandardCharsets.UTF_8);
+            os.write(input, 0, input.length);
+        }
+        
+        int responseCode = conn.getResponseCode();
+        
+        // 如果 404，尝试原生接口路径 (示例，具体需根据 RAGFlow 版本调整)
+        if (responseCode == 404) {
+             throw new Exception("RAGFlow 接口路径未找到，请检查 Base URL 是否正确 (例如: http://localhost:9380)");
+        }
+        
+        if (responseCode != 200) {
+            // 读取错误信息
+            try (BufferedReader br = new BufferedReader(
+                    new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8))) {
+                StringBuilder errorResponse = new StringBuilder();
+                String line;
+                while ((line = br.readLine()) != null) {
+                    errorResponse.append(line);
+                }
+                throw new Exception("RAGFlow 请求失败: " + responseCode + " " + errorResponse.toString());
+            }
+        }
+        
+        StringBuilder response = new StringBuilder();
+        try (BufferedReader br = new BufferedReader(
+                new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = br.readLine()) != null) {
+                response.append(line);
+            }
+        }
+        
+        // 打印原始响应以便调试
+        System.out.println("RAGFlow Response: " + response.toString());
+        
+        JSONObject jsonResponse = new JSONObject(response.toString());
+        
+        // 解析 OpenAI 兼容格式
+        if (jsonResponse.has("choices") && !jsonResponse.isNull("choices")) {
+            return jsonResponse
+                .getJSONArray("choices")
+                .getJSONObject(0)
+                .getJSONObject("message")
+                .getString("content");
+        } else if (jsonResponse.has("data") && !jsonResponse.isNull("data")) {
+             Object dataObj = jsonResponse.get("data");
+             if (dataObj instanceof JSONObject) {
+                 JSONObject dataJson = (JSONObject) dataObj;
+                 // RAGFlow 原生格式通常包含 answer
+                 if (dataJson.has("answer")) {
+                     return dataJson.getString("answer");
+                 } else if (dataJson.has("content")) {
+                     return dataJson.getString("content");
+                 } else {
+                     return dataJson.toString();
+                 }
+             } else if (dataObj instanceof String) {
+                 return (String) dataObj;
+             } else {
+                 return String.valueOf(dataObj);
+             }
+        } else if (jsonResponse.has("answer")) {
+            // 某些直接返回 answer 的情况
+            return jsonResponse.getString("answer");
+        } else {
+            return jsonResponse.toString();
+        }
+    }
+    
+    /**
+     * 对话服务入口
+     */
+    public static String chat(JSONArray messages, String apiKey, String model) throws Exception {
+        return chatSiliconFlow(messages, apiKey, model);
+    }
     
     /**
      * HTTP 服务器入口（供 React Native 调用）
@@ -190,11 +373,19 @@ public class SummarisePage {
                 
                 JSONObject request = new JSONObject(requestBody);
                 JSONArray messages = request.getJSONArray("messages");
-                String apiKey = request.getString("apiKey");
+                String apiKey = request.optString("apiKey", "");
                 String model = request.optString("model", "Qwen/Qwen2.5-7B-Instruct");
+                String provider = request.optString("provider", "siliconflow");
+                String ragflowApiKey = request.optString("ragflowApiKey", "");
+                String ragflowBaseUrl = request.optString("ragflowBaseUrl", "");
                 
                 // 调用对话服务
-                String reply = chat(messages, apiKey, model);
+                String reply;
+                if ("ragflow".equals(provider)) {
+                    reply = chatRagFlow(messages, ragflowApiKey, ragflowBaseUrl);
+                } else {
+                    reply = chatSiliconFlow(messages, apiKey, model);
+                }
                 
                 // 返回结果
                 JSONObject result = new JSONObject();

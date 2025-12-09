@@ -271,9 +271,16 @@ export default function SimpleBrowser() {
   // API Key 、模型和设置面板状态
   const [apiKey, setApiKey] = useState<string>('');
   const [selectedModel, setSelectedModel] = useState<string>('Qwen/Qwen2.5-7B-Instruct');
+  const [ragflowApiKey, setRagflowApiKey] = useState<string>('');
+  const [ragflowBaseUrl, setRagflowBaseUrl] = useState<string>('');
+  const [selectedProvider, setSelectedProvider] = useState<'siliconflow' | 'ragflow'>('siliconflow');
   const [isSettingsPanelVisible, setSettingsPanelVisible] = useState(false);
+  
   const API_KEY_STORAGE_KEY = 'browser.siliconflow.apikey.v1';
   const MODEL_STORAGE_KEY = 'browser.siliconflow.model.v1';
+  const RAGFLOW_API_KEY_STORAGE_KEY = 'browser.ragflow.apikey.v1';
+  const RAGFLOW_BASE_URL_STORAGE_KEY = 'browser.ragflow.baseurl.v1';
+  const SELECTED_PROVIDER_STORAGE_KEY = 'browser.ai.provider.v1';
 
   // 主题
   const colorScheme = useColorScheme();
@@ -305,11 +312,20 @@ export default function SimpleBrowser() {
     const loadApiKey = async () => {
       try {
         const key = await AsyncStorage.getItem(API_KEY_STORAGE_KEY);
-        if (key) {
-          setApiKey(key);
+        if (key) setApiKey(key);
+        
+        const ragKey = await AsyncStorage.getItem(RAGFLOW_API_KEY_STORAGE_KEY);
+        if (ragKey) setRagflowApiKey(ragKey);
+        
+        const ragUrl = await AsyncStorage.getItem(RAGFLOW_BASE_URL_STORAGE_KEY);
+        if (ragUrl) setRagflowBaseUrl(ragUrl);
+        
+        const provider = await AsyncStorage.getItem(SELECTED_PROVIDER_STORAGE_KEY);
+        if (provider === 'siliconflow' || provider === 'ragflow') {
+          setSelectedProvider(provider);
         }
       } catch (e) {
-        console.warn('Failed to load API key', e);
+        console.warn('Failed to load settings', e);
       }
     };
     
@@ -565,6 +581,28 @@ export default function SimpleBrowser() {
       setSettingsPanelVisible(false);
     } catch (e) {
       Alert.alert('保存失败', '无法保存 API Key');
+    }
+  };
+  
+  const handleSaveRagflowConfig = async (key: string, url: string) => {
+    try {
+      await AsyncStorage.setItem(RAGFLOW_API_KEY_STORAGE_KEY, key);
+      await AsyncStorage.setItem(RAGFLOW_BASE_URL_STORAGE_KEY, url);
+      setRagflowApiKey(key);
+      setRagflowBaseUrl(url);
+      Alert.alert('保存成功', 'RAGFlow 配置已保存');
+      setSettingsPanelVisible(false);
+    } catch (e) {
+      Alert.alert('保存失败', '无法保存 RAGFlow 配置');
+    }
+  };
+  
+  const handleProviderChange = async (provider: 'siliconflow' | 'ragflow') => {
+    try {
+      await AsyncStorage.setItem(SELECTED_PROVIDER_STORAGE_KEY, provider);
+      setSelectedProvider(provider);
+    } catch (e) {
+      console.warn('Failed to save provider', e);
     }
   };
   
@@ -1641,8 +1679,13 @@ export default function SimpleBrowser() {
         <SettingsPanel
           apiKey={apiKey}
           selectedModel={selectedModel}
+          ragflowApiKey={ragflowApiKey}
+          ragflowBaseUrl={ragflowBaseUrl}
+          selectedProvider={selectedProvider}
           onSave={handleSaveApiKey}
+          onSaveRagflow={handleSaveRagflowConfig}
           onModelChange={handleSaveModel}
+          onProviderChange={handleProviderChange}
           onDismiss={() => setSettingsPanelVisible(false)}
           isDark={colorScheme === 'dark'}
         />
@@ -1655,6 +1698,9 @@ export default function SimpleBrowser() {
         pageContent={pageContentForChat}
         apiKey={apiKey}
         model={selectedModel}
+        ragflowApiKey={ragflowApiKey}
+        ragflowBaseUrl={ragflowBaseUrl}
+        selectedProvider={selectedProvider}
         error={summaryError}
         isLoading={isSummarizing}
         onDismiss={() => setSummaryDrawerVisible(false)}
@@ -2484,6 +2530,9 @@ type SummaryDrawerProps = {
   pageContent: string;
   apiKey: string;
   model: string;
+  ragflowApiKey?: string;
+  ragflowBaseUrl?: string;
+  selectedProvider?: 'siliconflow' | 'ragflow';
   error: string | null;
   isLoading: boolean;
   onDismiss: () => void;
@@ -2506,6 +2555,9 @@ function SummaryDrawer({
   pageContent,
   apiKey,
   model,
+  ragflowApiKey,
+  ragflowBaseUrl,
+  selectedProvider = 'siliconflow',
   error,
   isLoading,
   onDismiss,
@@ -2560,7 +2612,10 @@ function SummaryDrawer({
         body: JSON.stringify({
           messages: fullHistory,
           apiKey,
-          model
+          model,
+          provider: selectedProvider,
+          ragflowApiKey,
+          ragflowBaseUrl
         })
       });
 
@@ -2718,8 +2773,13 @@ const AVAILABLE_MODELS = [
 type SettingsPanelProps = {
   apiKey: string;
   selectedModel: string;
+  ragflowApiKey: string;
+  ragflowBaseUrl: string;
+  selectedProvider: 'siliconflow' | 'ragflow';
   onSave: (key: string) => void;
+  onSaveRagflow: (key: string, url: string) => void;
   onModelChange: (model: string) => void;
+  onProviderChange: (provider: 'siliconflow' | 'ragflow') => void;
   onDismiss: () => void;
   isDark: boolean;
 };
@@ -2731,13 +2791,20 @@ type SettingsPanelProps = {
 function SettingsPanel({
   apiKey,
   selectedModel,
+  ragflowApiKey,
+  ragflowBaseUrl,
+  selectedProvider,
   onSave,
+  onSaveRagflow,
   onModelChange,
+  onProviderChange,
   onDismiss,
   isDark,
 }: SettingsPanelProps) {
-  const [currentView, setCurrentView] = useState<'main' | 'siliconflow'>('main');
+  const [currentView, setCurrentView] = useState<'main' | 'siliconflow' | 'ragflow'>('main');
   const [inputValue, setInputValue] = useState(apiKey);
+  const [ragKeyInput, setRagKeyInput] = useState(ragflowApiKey);
+  const [ragUrlInput, setRagUrlInput] = useState(ragflowBaseUrl);
   
   const handleSaveSiliconFlow = () => {
     if (!inputValue.trim()) {
@@ -2745,6 +2812,14 @@ function SettingsPanel({
       return;
     }
     onSave(inputValue.trim());
+  };
+
+  const handleSaveRagflow = () => {
+    if (!ragKeyInput.trim() || !ragUrlInput.trim()) {
+      Alert.alert('提示', '请输入 API Key 和 Base URL');
+      return;
+    }
+    onSaveRagflow(ragKeyInput.trim(), ragUrlInput.trim());
   };
 
   const renderMainView = () => (
@@ -2756,18 +2831,108 @@ function SettingsPanel({
       <ThemedText style={styles.settingSectionTitle}>AI 服务提供商</ThemedText>
       
       <Pressable
-        style={[styles.providerCard, isDark && styles.providerCardDark]}
-        onPress={() => setCurrentView('siliconflow')}
+        style={[
+          styles.providerCard, 
+          isDark && styles.providerCardDark,
+          selectedProvider === 'siliconflow' && { borderColor: '#4f46e5', borderWidth: 1 }
+        ]}
+        onPress={() => {
+          onProviderChange('siliconflow');
+          setCurrentView('siliconflow');
+        }}
       >
         <View style={styles.providerIconContainer}>
           <Ionicons name="hardware-chip-outline" size={24} color="#4f46e5" />
         </View>
         <View style={styles.providerInfo}>
-          <ThemedText style={styles.providerName}>硅基流动 (SiliconFlow)</ThemedText>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <ThemedText style={styles.providerName}>硅基流动 (SiliconFlow)</ThemedText>
+            {selectedProvider === 'siliconflow' && (
+              <View style={{ backgroundColor: '#4f46e5', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                <ThemedText style={{ color: '#fff', fontSize: 10, fontWeight: 'bold' }}>当前使用</ThemedText>
+              </View>
+            )}
+          </View>
           <ThemedText style={styles.providerDesc}>提供 Qwen, Yi, DeepSeek 等高性能模型</ThemedText>
         </View>
         <Ionicons name="chevron-forward" size={20} color={isDark ? '#64748b' : '#94a3b8'} />
       </Pressable>
+
+      <Pressable
+        style={[
+          styles.providerCard, 
+          isDark && styles.providerCardDark,
+          selectedProvider === 'ragflow' && { borderColor: '#4f46e5', borderWidth: 1 }
+        ]}
+        onPress={() => {
+          onProviderChange('ragflow');
+          setCurrentView('ragflow');
+        }}
+      >
+        <View style={[styles.providerIconContainer, { backgroundColor: '#ecfdf5' }]}>
+          <Ionicons name="file-tray-full-outline" size={24} color="#10b981" />
+        </View>
+        <View style={styles.providerInfo}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <ThemedText style={styles.providerName}>RAGFlow</ThemedText>
+            {selectedProvider === 'ragflow' && (
+              <View style={{ backgroundColor: '#10b981', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                <ThemedText style={{ color: '#fff', fontSize: 10, fontWeight: 'bold' }}>当前使用</ThemedText>
+              </View>
+            )}
+          </View>
+          <ThemedText style={styles.providerDesc}>基于 RAG 的知识库问答引擎</ThemedText>
+        </View>
+        <Ionicons name="chevron-forward" size={20} color={isDark ? '#64748b' : '#94a3b8'} />
+      </Pressable>
+    </ScrollView>
+  );
+
+  const renderRagflowView = () => (
+    <ScrollView 
+      style={{ flex: 1 }}
+      contentContainerStyle={[styles.settingsContent, { paddingBottom: 100 }]} 
+      showsVerticalScrollIndicator={false}
+      keyboardDismissMode="on-drag"
+    >
+      <View style={styles.settingItem}>
+        <ThemedText style={styles.settingLabel}>RAGFlow Base URL</ThemedText>
+        <TextInput
+          style={[
+            styles.settingInput,
+            isDark && styles.settingInputDark,
+          ]}
+          value={ragUrlInput}
+          onChangeText={setRagUrlInput}
+          placeholder="例如: https://demo.ragflow.io"
+          placeholderTextColor={isDark ? '#64748b' : '#94a3b8'}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+        <ThemedText style={styles.settingHint}>
+          RAGFlow 服务的访问地址
+        </ThemedText>
+      </View>
+
+      <View style={styles.settingItem}>
+        <ThemedText style={styles.settingLabel}>RAGFlow API Key</ThemedText>
+        <TextInput
+          style={[
+            styles.settingInput,
+            isDark && styles.settingInputDark,
+          ]}
+          value={ragKeyInput}
+          onChangeText={setRagKeyInput}
+          placeholder="请输入 API Key"
+          placeholderTextColor={isDark ? '#64748b' : '#94a3b8'}
+          autoCapitalize="none"
+          autoCorrect={false}
+          secureTextEntry={false}
+        />
+        <ThemedText style={styles.settingHint}>
+          在 RAGFlow 控制台获取 API Key
+        </ThemedText>
+      </View>
     </ScrollView>
   );
 
@@ -2874,11 +3039,15 @@ function SettingsPanel({
             )}
             
             <ThemedText style={styles.bookmarksTitle}>
-              {currentView === 'main' ? '设置' : '硅基流动'}
+              {currentView === 'main' ? '设置' : (currentView === 'siliconflow' ? '硅基流动' : 'RAGFlow')}
             </ThemedText>
             
             {currentView === 'siliconflow' ? (
               <Pressable onPress={handleSaveSiliconFlow} style={styles.bookmarksDoneButton}>
+                <ThemedText style={[styles.bookmarksDoneText, { color: '#007AFF' }]}>保存</ThemedText>
+              </Pressable>
+            ) : currentView === 'ragflow' ? (
+              <Pressable onPress={handleSaveRagflow} style={styles.bookmarksDoneButton}>
                 <ThemedText style={[styles.bookmarksDoneText, { color: '#007AFF' }]}>保存</ThemedText>
               </Pressable>
             ) : (
@@ -2887,7 +3056,7 @@ function SettingsPanel({
           </View>
           
           {/* 内容区域 */}
-          {currentView === 'main' ? renderMainView() : renderSiliconFlowView()}
+          {currentView === 'main' ? renderMainView() : (currentView === 'siliconflow' ? renderSiliconFlowView() : renderRagflowView())}
         </View>
       </KeyboardAvoidingView>
     </View>
