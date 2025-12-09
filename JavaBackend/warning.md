@@ -1,0 +1,1 @@
+Do not modified the folder, the sample of JavaBackend has been completed, It is just for testing, If new features are considered, develop /Users/aaronyu/Desktop/React_Native/React_Native_IOS/AuroraBackend after now
