@@ -1,0 +1,26 @@
+依赖库已存在。
+正在编译 SummarisePage.java ...
+Note: SummarisePage.java uses or overrides a deprecated API.
+Note: Recompile with -Xlint:deprecation for details.
+编译成功。
+========================================
+正在启动总结服务...
+监听端口: 8080
+请保持此终端窗口开启
+========================================
+总结服务已启动，监听端口: 8080
+测试命令: curl -X POST http://localhost:8080/summarise -H 'Content-Type: application/json' -d '{"content":"测试内容"}'
+java.lang.Exception: API 请求失败，状态码: 401
+	at SummarisePage.chat(SummarisePage.java:134)
+	at SummarisePage.lambda$main$0(SummarisePage.java:197)
+	at jdk.httpserver/com.sun.net.httpserver.Filter$Chain.doFilter(Filter.java:98)
+	at jdk.httpserver/sun.net.httpserver.AuthFilter.doFilter(AuthFilter.java:82)
+	at jdk.httpserver/com.sun.net.httpserver.Filter$Chain.doFilter(Filter.java:101)
+	at jdk.httpserver/sun.net.httpserver.ServerImpl$Exchange$LinkHandler.handle(ServerImpl.java:871)
+	at jdk.httpserver/com.sun.net.httpserver.Filter$Chain.doFilter(Filter.java:98)
+	at jdk.httpserver/sun.net.httpserver.ServerImpl$Exchange.run(ServerImpl.java:847)
+	at jdk.httpserver/sun.net.httpserver.ServerImpl$DefaultExecutor.execute(ServerImpl.java:204)
+	at jdk.httpserver/sun.net.httpserver.ServerImpl$Dispatcher.handle(ServerImpl.java:566)
+	at jdk.httpserver/sun.net.httpserver.ServerImpl$Dispatcher.run(ServerImpl.java:532)
+	at java.base/java.lang.Thread.run(Thread.java:1583)
+./run_server.sh: line 37: 92389 Killed: 9               java -cp .:"$JAR_NAME" SummarisePage 8080

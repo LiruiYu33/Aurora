@@ -95,6 +95,63 @@ public class SummarisePage {
     }
     
     /**
+     * 对话服务
+     * @param messages 完整对话历史
+     * @param apiKey API Key
+     * @param model 模型名称
+     * @return AI 回复
+     */
+    public static String chat(JSONArray messages, String apiKey, String model) throws Exception {
+        if (apiKey == null || apiKey.isEmpty()) {
+            throw new Exception("API Key 未提供");
+        }
+        
+        if (model == null || model.isEmpty()) {
+            model = "Qwen/Qwen2.5-7B-Instruct";
+        }
+        
+        JSONObject requestBody = new JSONObject();
+        requestBody.put("model", model);
+        requestBody.put("stream", false);
+        requestBody.put("max_tokens", 1024);
+        requestBody.put("temperature", 0.7);
+        requestBody.put("messages", messages);
+        
+        URL url = new URL(API_URL);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("POST");
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+        conn.setDoOutput(true);
+        
+        try (OutputStream os = conn.getOutputStream()) {
+            byte[] input = requestBody.toString().getBytes(StandardCharsets.UTF_8);
+            os.write(input, 0, input.length);
+        }
+        
+        int responseCode = conn.getResponseCode();
+        if (responseCode != 200) {
+            throw new Exception("API 请求失败，状态码: " + responseCode);
+        }
+        
+        StringBuilder response = new StringBuilder();
+        try (BufferedReader br = new BufferedReader(
+                new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = br.readLine()) != null) {
+                response.append(line);
+            }
+        }
+        
+        JSONObject jsonResponse = new JSONObject(response.toString());
+        return jsonResponse
+            .getJSONArray("choices")
+            .getJSONObject(0)
+            .getJSONObject("message")
+            .getString("content");
+    }
+    
+    /**
      * HTTP 服务器入口（供 React Native 调用）
      * 启动命令: java SummarisePage 8080
      */
@@ -103,6 +160,66 @@ public class SummarisePage {
         
         com.sun.net.httpserver.HttpServer server = 
             com.sun.net.httpserver.HttpServer.create(new InetSocketAddress(port), 0);
+            
+        // 聊天接口
+        server.createContext("/chat", exchange -> {
+            try {
+                // 设置 CORS
+                exchange.getResponseHeaders().add("Access-Control-Allow-Origin", "*");
+                exchange.getResponseHeaders().add("Access-Control-Allow-Methods", "POST, OPTIONS");
+                exchange.getResponseHeaders().add("Access-Control-Allow-Headers", "Content-Type");
+                
+                if ("OPTIONS".equals(exchange.getRequestMethod())) {
+                    exchange.sendResponseHeaders(200, -1);
+                    return;
+                }
+                
+                if (!"POST".equals(exchange.getRequestMethod())) {
+                    String error = "{\"error\": \"仅支持 POST 请求\"}";
+                    exchange.sendResponseHeaders(405, error.getBytes().length);
+                    exchange.getResponseBody().write(error.getBytes());
+                    exchange.close();
+                    return;
+                }
+                
+                // 读取请求体
+                String requestBody = new String(
+                    exchange.getRequestBody().readAllBytes(), 
+                    StandardCharsets.UTF_8
+                );
+                
+                JSONObject request = new JSONObject(requestBody);
+                JSONArray messages = request.getJSONArray("messages");
+                String apiKey = request.getString("apiKey");
+                String model = request.optString("model", "Qwen/Qwen2.5-7B-Instruct");
+                
+                // 调用对话服务
+                String reply = chat(messages, apiKey, model);
+                
+                // 返回结果
+                JSONObject result = new JSONObject();
+                result.put("reply", reply);
+                result.put("success", true);
+                
+                byte[] responseBytes = result.toString().getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().add("Content-Type", "application/json; charset=utf-8");
+                exchange.sendResponseHeaders(200, responseBytes.length);
+                exchange.getResponseBody().write(responseBytes);
+                exchange.close();
+                
+            } catch (Exception e) {
+                e.printStackTrace();
+                JSONObject error = new JSONObject();
+                error.put("error", e.getMessage());
+                error.put("success", false);
+                
+                byte[] errorBytes = error.toString().getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().add("Content-Type", "application/json; charset=utf-8");
+                exchange.sendResponseHeaders(500, errorBytes.length);
+                exchange.getResponseBody().write(errorBytes);
+                exchange.close();
+            }
+        });
         
         server.createContext("/summarise", exchange -> {
             try {

@@ -8,7 +8,8 @@
  */
 
 // 请根据运行环境修改此处 IP
-const BACKEND_URL = 'http://192.168.1.8:8080/summarise';
+export const API_BASE_URL = 'http://192.168.1.8:8080';
+const BACKEND_URL = `${API_BASE_URL}/summarise`;
 
 export interface SummariseRequest {
   content: string;

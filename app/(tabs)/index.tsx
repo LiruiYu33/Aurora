@@ -32,7 +32,7 @@ import type { WebViewNavigation } from 'react-native-webview/lib/WebViewTypes';
 
 import { ThemedText } from '@/components/themed-text';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { summarisePage } from '@/services/SummariseService';
+import { API_BASE_URL, summarisePage } from '@/services/SummariseService';
 
 // ==================== 类型定义 ====================
 type BrowserTab = {
@@ -259,6 +259,8 @@ export default function SimpleBrowser() {
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [summaryDrawerVisible, setSummaryDrawerVisible] = useState(false);
   const [summaryContent, setSummaryContent] = useState<string>('');
+  const [pageContentForChat, setPageContentForChat] = useState<string>('');
+  const [lastSummarizedUrl, setLastSummarizedUrl] = useState<string | null>(null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   
   // 下拉刷新状态
@@ -595,6 +597,12 @@ export default function SimpleBrowser() {
     }
     
     if (isSummarizing) return;
+    
+    // 如果当前 URL 已经总结过且有内容，直接显示
+    if (activeTab.url === lastSummarizedUrl && summaryContent && !summaryError) {
+      setSummaryDrawerVisible(true);
+      return;
+    }
     
     try {
       setIsSummarizing(true);
@@ -1217,6 +1225,8 @@ export default function SimpleBrowser() {
           // 刷新页面
           console.log('Reloading page');
           webViewRef.current?.reload();
+          // 刷新时清除总结缓存
+          setLastSummarizedUrl(null);
         } else {
           console.log('Distance too short, no action');
         }
@@ -1299,6 +1309,9 @@ export default function SimpleBrowser() {
         // 收到页面内容，开始调用 API 总结
         if (summaryTimeoutRef.current) clearTimeout(summaryTimeoutRef.current);
         
+        // 保存页面内容供对话使用
+        setPageContentForChat(data.content);
+        
         try {
           const summary = await summarisePage(
             data.content,
@@ -1307,6 +1320,7 @@ export default function SimpleBrowser() {
             activeTab?.url
           );
           setSummaryContent(summary);
+          setLastSummarizedUrl(activeTab?.url || null);
         } catch (error: any) {
           setSummaryError(error.message || '总结生成失败');
         } finally {
@@ -1638,6 +1652,9 @@ export default function SimpleBrowser() {
       <SummaryDrawer
         visible={summaryDrawerVisible}
         content={summaryContent}
+        pageContent={pageContentForChat}
+        apiKey={apiKey}
+        model={selectedModel}
         error={summaryError}
         isLoading={isSummarizing}
         onDismiss={() => setSummaryDrawerVisible(false)}
@@ -2464,6 +2481,9 @@ function BookmarksPanel({
 type SummaryDrawerProps = {
   visible: boolean;
   content: string;
+  pageContent: string;
+  apiKey: string;
+  model: string;
   error: string | null;
   isLoading: boolean;
   onDismiss: () => void;
@@ -2471,29 +2491,106 @@ type SummaryDrawerProps = {
   isDark: boolean;
 };
 
+type ChatMessage = {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+};
+
 /**
  * 总结抽屉组件
- * 从底部滑出显示总结结果
+ * 从底部滑出显示总结结果，并支持对话
  */
 function SummaryDrawer({
   visible,
   content,
+  pageContent,
+  apiKey,
+  model,
   error,
   isLoading,
   onDismiss,
   onShare,
   isDark,
 }: SummaryDrawerProps) {
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [isChatLoading, setIsChatLoading] = useState(false);
+  const scrollViewRef = useRef<ScrollView>(null);
+
+  // 当总结内容变化时重置对话
+  useEffect(() => {
+    if (content) {
+      setChatMessages([]);
+    }
+  }, [content]);
+
+  const handleSend = async () => {
+    if (!chatInput.trim() || isChatLoading) return;
+
+    const userMsg = chatInput.trim();
+    setChatInput('');
+    
+    const newMessages: ChatMessage[] = [
+      ...chatMessages,
+      { role: 'user', content: userMsg }
+    ];
+    setChatMessages(newMessages);
+    setIsChatLoading(true);
+    
+    // 滚动到底部
+    setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
+
+    try {
+      // 构建完整对话历史
+      const fullHistory: ChatMessage[] = [];
+      
+      // 添加上下文系统提示
+      fullHistory.push({
+        role: 'system',
+        content: `你是一个有用的助手。以下是用户正在阅读的网页内容：\n\n${pageContent}\n\n以下是你生成的总结：\n${content}\n\n请基于以上内容回答用户的问题。`
+      });
+      
+      // 添加历史消息
+      fullHistory.push(...newMessages);
+
+      // 调用 API
+      const response = await fetch(`${API_BASE_URL}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: fullHistory,
+          apiKey,
+          model
+        })
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        setChatMessages(prev => [...prev, { role: 'assistant', content: data.reply }]);
+      } else {
+        Alert.alert('错误', data.error || '获取回复失败');
+      }
+    } catch (e: any) {
+      Alert.alert('错误', e.message);
+    } finally {
+      setIsChatLoading(false);
+      setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
+    }
+  };
+
   if (!visible) return null;
   
   return (
-    <View style={styles.summaryOverlay}>
+    <KeyboardAvoidingView 
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      style={styles.summaryOverlay}
+    >
       <Pressable style={styles.summaryBackdrop} onPress={onDismiss} />
       
-      <View style={[styles.summaryDrawer, isDark && styles.summaryDrawerDark]}>
+      <View style={[styles.summaryDrawer, isDark && styles.summaryDrawerDark, { height: '80%' }]}>
         {/* 头部 */}
         <View style={styles.summaryHeader}>
-          <ThemedText style={styles.summaryTitle}>网页总结</ThemedText>
+          <ThemedText style={styles.summaryTitle}>网页总结 & 对话</ThemedText>
           <View style={styles.summaryHeaderButtons}>
             {content && !error && (
               <Pressable onPress={onShare} style={styles.summaryShareButton}>
@@ -2507,7 +2604,12 @@ function SummaryDrawer({
         </View>
         
         {/* 内容 */}
-        <ScrollView style={styles.summaryContentScroll} showsVerticalScrollIndicator={true}>
+        <ScrollView 
+          ref={scrollViewRef}
+          style={styles.summaryContentScroll} 
+          contentContainerStyle={{ paddingBottom: 20 }}
+          showsVerticalScrollIndicator={true}
+        >
           {isLoading ? (
             <View style={styles.summaryLoading}>
               <ActivityIndicator size="large" color="#4f46e5" />
@@ -2519,11 +2621,86 @@ function SummaryDrawer({
               <ThemedText style={styles.summaryErrorText}>{error}</ThemedText>
             </View>
           ) : (
-            <ThemedText style={styles.summaryText}>{content}</ThemedText>
+            <>
+              <ThemedText style={styles.summaryText}>{content}</ThemedText>
+              
+              {/* 分割线 */}
+              <View style={{ height: 1, backgroundColor: isDark ? '#333' : '#eee', marginVertical: 20 }} />
+              <ThemedText style={{ fontSize: 14, fontWeight: '600', color: '#64748b', marginBottom: 10 }}>
+                基于内容的对话
+              </ThemedText>
+
+              {/* 对话消息 */}
+              {chatMessages.map((msg, index) => (
+                <View key={index} style={{ 
+                  alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
+                  backgroundColor: msg.role === 'user' ? '#4f46e5' : (isDark ? '#2c2c2e' : '#f1f5f9'),
+                  padding: 10,
+                  borderRadius: 12,
+                  marginBottom: 8,
+                  maxWidth: '85%'
+                }}>
+                  <ThemedText style={{ color: msg.role === 'user' ? '#fff' : (isDark ? '#fff' : '#000') }}>
+                    {msg.content}
+                  </ThemedText>
+                </View>
+              ))}
+              
+              {isChatLoading && (
+                <View style={{ alignSelf: 'flex-start', padding: 10 }}>
+                  <ActivityIndicator size="small" color="#4f46e5" />
+                </View>
+              )}
+            </>
           )}
         </ScrollView>
+
+        {/* 输入框 */}
+        {!isLoading && !error && (
+          <View style={{ 
+            flexDirection: 'row', 
+            padding: 10, 
+            borderTopWidth: 0.5, 
+            borderTopColor: isDark ? '#333' : '#eee',
+            backgroundColor: isDark ? '#1c1c1e' : '#fff',
+            paddingBottom: Platform.OS === 'ios' ? 30 : 10
+          }}>
+            <TextInput
+              style={{ 
+                flex: 1, 
+                backgroundColor: isDark ? '#2c2c2e' : '#f1f5f9',
+                borderRadius: 20,
+                paddingHorizontal: 16,
+                paddingVertical: 8,
+                color: isDark ? '#fff' : '#000',
+                marginRight: 10,
+                maxHeight: 100
+              }}
+              placeholder="针对内容提问..."
+              placeholderTextColor="#94a3b8"
+              value={chatInput}
+              onChangeText={setChatInput}
+              onSubmitEditing={handleSend}
+              returnKeyType="send"
+              multiline
+            />
+            <Pressable 
+              onPress={handleSend}
+              style={{ 
+                justifyContent: 'center', 
+                alignItems: 'center', 
+                width: 40, 
+                height: 40, 
+                backgroundColor: '#4f46e5', 
+                borderRadius: 20 
+              }}
+            >
+              <Ionicons name="arrow-up" size={24} color="#fff" />
+            </Pressable>
+          </View>
+        )}
       </View>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
