@@ -14,7 +14,8 @@ import org.json.*;
  */
 public class Server {
     
-    private static final String API_URL = "https://api.siliconflow.cn/v1/chat/completions";
+    // SiliconFlow API 端点
+    private static final String SILICONFLOW_API_URL = "https://api.siliconflow.cn/v1/chat/completions";
     
     /**
      * 总结网页内容
@@ -55,7 +56,7 @@ public class Server {
         requestBody.put("messages", messages);
         
         // 发送 HTTP 请求
-        URL url = new URL(API_URL);
+        URL url = new URL(SILICONFLOW_API_URL);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("POST");
         conn.setRequestProperty("Content-Type", "application/json");
@@ -113,7 +114,7 @@ public class Server {
         requestBody.put("temperature", 0.7);
         requestBody.put("messages", messages);
         
-        URL url = new URL(API_URL);
+        URL url = new URL(SILICONFLOW_API_URL);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("POST");
         conn.setRequestProperty("Content-Type", "application/json");
