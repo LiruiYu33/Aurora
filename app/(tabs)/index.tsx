@@ -31,7 +31,7 @@ import type { WebViewNavigation } from 'react-native-webview/lib/WebViewTypes';
 
 import { ThemedText } from '@/components/themed-text';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { summariseWebView } from '@/services/SummariseService';
+import { summarisePage } from '@/services/SummariseService';
 
 // ==================== 类型定义 ====================
 type BrowserTab = {
@@ -55,6 +55,41 @@ type QuickLink = {
 const DEFAULT_URL = 'https://www.google.com/';
 // 启动页标记（用于逻辑判断）
 const START_PAGE_MARKER = 'about:start';
+
+// 提取页面内容的脚本
+const EXTRACT_CONTENT_SCRIPT = `
+(function() {
+  try {
+    // 移除脚本、样式等标签
+    const clone = document.body.cloneNode(true);
+    const scripts = clone.querySelectorAll('script, style, noscript');
+    scripts.forEach(el => el.remove());
+    
+    // 获取纯文本
+    let text = clone.innerText || clone.textContent || '';
+    
+    // 清理多余空白
+    text = text.replace(/\\s+/g, ' ').trim();
+    
+    // 限制长度（避免超过 API 限制）
+    const maxLength = 12000;
+    if (text.length > maxLength) {
+      text = text.substring(0, maxLength) + '...';
+    }
+    
+    window.ReactNativeWebView.postMessage(JSON.stringify({
+      type: 'PAGE_CONTENT',
+      content: text
+    }));
+  } catch (e) {
+    window.ReactNativeWebView.postMessage(JSON.stringify({
+      type: 'PAGE_CONTENT_ERROR',
+      error: e.message
+    }));
+  }
+})();
+true;
+`;
 
 const createTab = (): BrowserTab => ({
   id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -295,6 +330,8 @@ export default function SimpleBrowser() {
   const webViewWrapperRefs = useRef<Record<string, View | null>>({});
   // 防止导航时隐藏导航栏的标志
   const isNavigatingRef = useRef(false);
+  // 总结超时计时器
+  const summaryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // 将已保存的启动页背景同步给 WebView（处理首屏加载和切换回启动页的场景）
   const activeStartTabId = activeTab?.id;
@@ -545,17 +582,20 @@ export default function SimpleBrowser() {
       setSummaryContent('');
       setSummaryDrawerVisible(true);
       
-      const summary = await summariseWebView(
-        webViewRef,
-        activeTab.url,
-        apiKey,
-        selectedModel
-      );
+      // 注入脚本提取内容
+      webViewRef.current?.injectJavaScript(EXTRACT_CONTENT_SCRIPT);
       
-      setSummaryContent(summary);
+      // 设置超时
+      if (summaryTimeoutRef.current) clearTimeout(summaryTimeoutRef.current);
+      summaryTimeoutRef.current = setTimeout(() => {
+        if (isSummarizing) {
+          setIsSummarizing(false);
+          setSummaryError('提取页面内容超时\n请重试或检查网络');
+        }
+      }, 15000); // 15秒超时
+      
     } catch (error: any) {
       setSummaryError(error.message || '总结失败\n请确保后端服务已启动');
-    } finally {
       setIsSummarizing(false);
     }
   };
@@ -1126,7 +1166,7 @@ export default function SimpleBrowser() {
   /**
    * 处理 WebView 发送的消息（滚动事件、启动页事件、下拉手势）
    */
-  const handleWebViewMessage = (event: { nativeEvent: { data: string } }) => {
+  const handleWebViewMessage = async (event: { nativeEvent: { data: string } }) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
       
@@ -1235,6 +1275,28 @@ export default function SimpleBrowser() {
           payload: bgImageUri
         });
         webViewRef.current?.postMessage(message);
+      } else if (data.type === 'PAGE_CONTENT') {
+        // 收到页面内容，开始调用 API 总结
+        if (summaryTimeoutRef.current) clearTimeout(summaryTimeoutRef.current);
+        
+        try {
+          const summary = await summarisePage(
+            data.content,
+            apiKey,
+            selectedModel,
+            activeTab?.url
+          );
+          setSummaryContent(summary);
+        } catch (error: any) {
+          setSummaryError(error.message || '总结生成失败');
+        } finally {
+          setIsSummarizing(false);
+        }
+      } else if (data.type === 'PAGE_CONTENT_ERROR') {
+        // 提取内容失败
+        if (summaryTimeoutRef.current) clearTimeout(summaryTimeoutRef.current);
+        setSummaryError('无法提取页面内容: ' + data.error);
+        setIsSummarizing(false);
       }
     } catch (e) {
       // 忽略非 JSON 消息

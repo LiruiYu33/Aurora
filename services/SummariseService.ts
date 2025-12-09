@@ -1,8 +1,14 @@
 /**
  * 网页总结服务 - 调用 Java 后端
+ * 
+ * 注意：
+ * 1. 如果在 iOS 模拟器运行，可以使用 'http://localhost:8080/summarise'
+ * 2. 如果在真机运行，请将 localhost 替换为电脑的局域网 IP 地址 (例如 'http://192.168.1.5:8080/summarise')
+ * 3. 请确保 Java 后端服务已启动 (运行 ./run_server.sh)
  */
 
-const BACKEND_URL = 'http://localhost:8080/summarise';
+// 请根据运行环境修改此处 IP
+const BACKEND_URL = 'http://192.168.1.8:8080/summarise';
 
 export interface SummariseRequest {
   content: string;
