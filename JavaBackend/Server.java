@@ -12,7 +12,7 @@ import org.json.*;
  * 网页总结服务 - 调用硅基流动 API
  * API Key 由前端传入，无需环境变量
  */
-public class SummarisePage {
+public class Server {
     
     private static final String API_URL = "https://api.siliconflow.cn/v1/chat/completions";
     
@@ -336,7 +336,7 @@ public class SummarisePage {
     
     /**
      * HTTP 服务器入口（供 React Native 调用）
-     * 启动命令: java SummarisePage 8080
+     * 启动命令: java Server 8080
      */
     public static void main(String[] args) throws Exception {
         int port = args.length > 0 ? Integer.parseInt(args[0]) : 8080;

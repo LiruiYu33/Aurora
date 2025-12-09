@@ -18,8 +18,8 @@ else
 fi
 
 # 2. 编译 Java 文件
-echo "正在编译 SummarisePage.java ..."
-javac -cp .:"$JAR_NAME" SummarisePage.java
+echo "正在编译 Server.java ..."
+javac -cp .:"$JAR_NAME" Server.java
 if [ $? -ne 0 ]; then
     echo "编译失败！请检查代码错误。"
     exit 1
@@ -34,4 +34,4 @@ echo "请保持此终端窗口开启"
 echo "========================================"
 
 # 运行 Java 程序 (注意：Mac/Linux 使用 : 分隔 classpath)
-java -cp .:"$JAR_NAME" SummarisePage 8080
+java -cp .:"$JAR_NAME" Server 8080
