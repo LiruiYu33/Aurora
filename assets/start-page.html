@@ -321,14 +321,6 @@
             }
         });
         
-        // 获取默认背景渐变（根据当前主题）
-        function getDefaultBackground() {
-            const isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-            return isDark 
-                ? 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)'
-                : 'linear-gradient(135deg, #fefeff 0%, #ffffff 100%)';
-        }
-
         // 重置背景
         document.getElementById('bgResetBtn').addEventListener('click', () => {
             if (window.ReactNativeWebView) {
@@ -336,10 +328,10 @@
                     type: 'resetBackground'
                 }));
             }
-            // 恢复默认背景渐变
-            document.body.style.backgroundImage = 'none';
-            document.body.style.background = getDefaultBackground();
-            document.documentElement.style.background = 'none';
+            // 移除 inline style，让 CSS 媒体查询自动生效
+            document.body.style.background = '';
+            document.body.style.backgroundImage = '';
+            document.documentElement.style.background = '';
         });
         
         // 接收来自 React Native 的背景图片 URI
@@ -358,10 +350,11 @@
                 
                 console.log('Background applied');
             } else {
-                // 恢复默认背景（根据当前主题）
-                document.body.style.background = getDefaultBackground();
-                document.documentElement.style.background = 'none';
-                console.log('Background reset');
+                // 移除 inline style，让 CSS 媒体查询自动生效
+                document.body.style.background = '';
+                document.body.style.backgroundImage = '';
+                document.documentElement.style.background = '';
+                console.log('Background reset to CSS default');
             }
         };
 
