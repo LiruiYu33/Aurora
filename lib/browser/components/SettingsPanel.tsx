@@ -21,11 +21,14 @@ type SettingsPanelProps = {
   selectedModel: string;
   ragflowApiKey: string;
   ragflowBaseUrl: string;
-  selectedProvider: 'siliconflow' | 'ragflow';
+  openaiApiKey: string;
+  openaiBaseUrl: string;
+  selectedProvider: 'siliconflow' | 'ragflow' | 'openai';
   onSave: (key: string) => void;
   onSaveRagflow: (key: string, url: string) => void;
+  onSaveOpenAI: (key: string, url: string) => void;
   onModelChange: (model: string) => void;
-  onProviderChange: (provider: 'siliconflow' | 'ragflow') => void;
+  onProviderChange: (provider: 'siliconflow' | 'ragflow' | 'openai') => void;
   onDismiss: () => void;
   isDark: boolean;
 };
@@ -35,18 +38,23 @@ export function SettingsPanel({
   selectedModel,
   ragflowApiKey,
   ragflowBaseUrl,
+  openaiApiKey,
+  openaiBaseUrl,
   selectedProvider,
   onSave,
   onSaveRagflow,
+  onSaveOpenAI,
   onModelChange,
   onProviderChange,
   onDismiss,
   isDark,
 }: SettingsPanelProps) {
-  const [currentView, setCurrentView] = useState<'main' | 'siliconflow' | 'ragflow'>('main');
+  const [currentView, setCurrentView] = useState<'main' | 'siliconflow' | 'ragflow' | 'openai'>('main');
   const [inputValue, setInputValue] = useState(apiKey);
   const [ragKeyInput, setRagKeyInput] = useState(ragflowApiKey);
   const [ragUrlInput, setRagUrlInput] = useState(ragflowBaseUrl);
+  const [openaiKeyInput, setOpenaiKeyInput] = useState(openaiApiKey);
+  const [openaiUrlInput, setOpenaiUrlInput] = useState(openaiBaseUrl);
   
   const handleSaveSiliconFlow = () => {
     if (!inputValue.trim()) {
@@ -62,6 +70,14 @@ export function SettingsPanel({
       return;
     }
     onSaveRagflow(ragKeyInput.trim(), ragUrlInput.trim());
+  };
+
+  const handleSaveOpenAI = () => {
+    if (!openaiKeyInput.trim() || !openaiUrlInput.trim()) {
+      Alert.alert('提示', '请输入 API Key 和 Base URL');
+      return;
+    }
+    onSaveOpenAI(openaiKeyInput.trim(), openaiUrlInput.trim());
   };
 
   const renderMainView = () => (
@@ -127,6 +143,83 @@ export function SettingsPanel({
         </View>
         <Ionicons name="chevron-forward" size={20} color={isDark ? '#64748b' : '#94a3b8'} />
       </Pressable>
+
+      <Pressable
+        style={[
+          styles.providerCard, 
+          isDark && styles.providerCardDark,
+          selectedProvider === 'openai' && { borderColor: '#4f46e5', borderWidth: 1 }
+        ]}
+        onPress={() => {
+          onProviderChange('openai');
+          setCurrentView('openai');
+        }}
+      >
+        <View style={[styles.providerIconContainer, { backgroundColor: '#f0fdf4' }]}>
+          <Ionicons name="flash-outline" size={24} color="#22c55e" />
+        </View>
+        <View style={styles.providerInfo}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <ThemedText style={styles.providerName}>OpenAI 兼容</ThemedText>
+            {selectedProvider === 'openai' && (
+              <View style={{ backgroundColor: '#22c55e', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                <ThemedText style={{ color: '#fff', fontSize: 10, fontWeight: 'bold' }}>当前使用</ThemedText>
+              </View>
+            )}
+          </View>
+          <ThemedText style={styles.providerDesc}>OpenAI 官方 API 或本地代理服务</ThemedText>
+        </View>
+        <Ionicons name="chevron-forward" size={20} color={isDark ? '#64748b' : '#94a3b8'} />
+      </Pressable>
+    </ScrollView>
+  );
+
+  const renderOpenAIView = () => (
+    <ScrollView 
+      style={{ flex: 1 }}
+      contentContainerStyle={[styles.settingsContent, { paddingBottom: 100 }]} 
+      showsVerticalScrollIndicator={false}
+      keyboardDismissMode="on-drag"
+    >
+      <View style={styles.settingItem}>
+        <ThemedText style={styles.settingLabel}>Base URL</ThemedText>
+        <TextInput
+          style={[
+            styles.settingInput,
+            isDark && styles.settingInputDark,
+          ]}
+          value={openaiUrlInput}
+          onChangeText={setOpenaiUrlInput}
+          placeholder="例如: https://api.openai.com/v1"
+          placeholderTextColor={isDark ? '#64748b' : '#94a3b8'}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+        <ThemedText style={styles.settingHint}>
+          OpenAI 官方: https://api.openai.com/v1{'\n'}
+          本地代理: http://192.168.1.8:8080
+        </ThemedText>
+      </View>
+
+      <View style={styles.settingItem}>
+        <ThemedText style={styles.settingLabel}>API Key</ThemedText>
+        <TextInput
+          style={[
+            styles.settingInput,
+            isDark && styles.settingInputDark,
+          ]}
+          value={openaiKeyInput}
+          onChangeText={setOpenaiKeyInput}
+          placeholder="请输入 OpenAI API Key (sk-...)"
+          placeholderTextColor={isDark ? '#64748b' : '#94a3b8'}
+          autoCapitalize="none"
+          autoCorrect={false}
+          secureTextEntry={false}
+        />
+        <ThemedText style={styles.settingHint}>
+          从 OpenAI 官网或代理服务获取的 API Key
+        </ThemedText>
+      </View>
     </ScrollView>
   );
 
@@ -279,7 +372,7 @@ export function SettingsPanel({
             )}
             
             <ThemedText style={styles.bookmarksTitle}>
-              {currentView === 'main' ? '设置' : (currentView === 'siliconflow' ? '硅基流动' : 'RAGFlow')}
+              {currentView === 'main' ? '设置' : (currentView === 'siliconflow' ? '硅基流动' : (currentView === 'ragflow' ? 'RAGFlow' : 'OpenAI 后端'))}
             </ThemedText>
             
             {currentView === 'siliconflow' ? (
@@ -290,12 +383,16 @@ export function SettingsPanel({
               <Pressable onPress={handleSaveRagflow} style={styles.bookmarksDoneButton}>
                 <ThemedText style={[styles.bookmarksDoneText, { color: '#007AFF' }]}>保存</ThemedText>
               </Pressable>
+            ) : currentView === 'openai' ? (
+              <Pressable onPress={handleSaveOpenAI} style={styles.bookmarksDoneButton}>
+                <ThemedText style={[styles.bookmarksDoneText, { color: '#007AFF' }]}>保存</ThemedText>
+              </Pressable>
             ) : (
               <View style={styles.bookmarksDoneButton} />
             )}
           </View>
           
-          {currentView === 'main' ? renderMainView() : (currentView === 'siliconflow' ? renderSiliconFlowView() : renderRagflowView())}
+          {currentView === 'main' ? renderMainView() : (currentView === 'siliconflow' ? renderSiliconFlowView() : (currentView === 'ragflow' ? renderRagflowView() : renderOpenAIView()))}
         </View>
       </KeyboardAvoidingView>
     </View>

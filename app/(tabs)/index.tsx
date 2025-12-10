@@ -85,13 +85,17 @@ export default function SimpleBrowser() {
   const [selectedModel, setSelectedModel] = useState<string>('Qwen/Qwen2.5-7B-Instruct');
   const [ragflowApiKey, setRagflowApiKey] = useState<string>('');
   const [ragflowBaseUrl, setRagflowBaseUrl] = useState<string>('');
-  const [selectedProvider, setSelectedProvider] = useState<'siliconflow' | 'ragflow'>('siliconflow');
+  const [openaiApiKey, setOpenaiApiKey] = useState<string>('');
+  const [openaiBaseUrl, setOpenaiBaseUrl] = useState<string>('');
+  const [selectedProvider, setSelectedProvider] = useState<'siliconflow' | 'ragflow' | 'openai'>('siliconflow');
   const [isSettingsPanelVisible, setSettingsPanelVisible] = useState(false);
   
   const API_KEY_STORAGE_KEY = 'browser.siliconflow.apikey.v1';
   const MODEL_STORAGE_KEY = 'browser.siliconflow.model.v1';
   const RAGFLOW_API_KEY_STORAGE_KEY = 'browser.ragflow.apikey.v1';
   const RAGFLOW_BASE_URL_STORAGE_KEY = 'browser.ragflow.baseurl.v1';
+  const OPENAI_API_KEY_STORAGE_KEY = 'browser.openai.apikey.v1';
+  const OPENAI_BASE_URL_STORAGE_KEY = 'browser.openai.baseurl.v1';
   const SELECTED_PROVIDER_STORAGE_KEY = 'browser.ai.provider.v1';
 
   // 主题
@@ -132,8 +136,14 @@ export default function SimpleBrowser() {
         const ragUrl = await AsyncStorage.getItem(RAGFLOW_BASE_URL_STORAGE_KEY);
         if (ragUrl) setRagflowBaseUrl(ragUrl);
         
+        const openaiKey = await AsyncStorage.getItem(OPENAI_API_KEY_STORAGE_KEY);
+        if (openaiKey) setOpenaiApiKey(openaiKey);
+        
+        const openaiUrl = await AsyncStorage.getItem(OPENAI_BASE_URL_STORAGE_KEY);
+        if (openaiUrl) setOpenaiBaseUrl(openaiUrl);
+        
         const provider = await AsyncStorage.getItem(SELECTED_PROVIDER_STORAGE_KEY);
-        if (provider === 'siliconflow' || provider === 'ragflow') {
+        if (provider === 'siliconflow' || provider === 'ragflow' || provider === 'openai') {
           setSelectedProvider(provider);
         }
       } catch (e) {
@@ -344,7 +354,20 @@ export default function SimpleBrowser() {
     }
   };
   
-  const handleProviderChange = async (provider: 'siliconflow' | 'ragflow') => {
+  const handleSaveOpenAIConfig = async (key: string, url: string) => {
+    try {
+      await AsyncStorage.setItem(OPENAI_API_KEY_STORAGE_KEY, key);
+      await AsyncStorage.setItem(OPENAI_BASE_URL_STORAGE_KEY, url);
+      setOpenaiApiKey(key);
+      setOpenaiBaseUrl(url);
+      Alert.alert('保存成功', 'OpenAI 配置已保存');
+      setSettingsPanelVisible(false);
+    } catch (e) {
+      Alert.alert('保存失败', '无法保存 OpenAI 配置');
+    }
+  };
+  
+  const handleProviderChange = async (provider: 'siliconflow' | 'ragflow' | 'openai') => {
     try {
       await AsyncStorage.setItem(SELECTED_PROVIDER_STORAGE_KEY, provider);
       setSelectedProvider(provider);
@@ -1241,9 +1264,12 @@ export default function SimpleBrowser() {
           selectedModel={selectedModel}
           ragflowApiKey={ragflowApiKey}
           ragflowBaseUrl={ragflowBaseUrl}
+          openaiApiKey={openaiApiKey}
+          openaiBaseUrl={openaiBaseUrl}
           selectedProvider={selectedProvider}
           onSave={handleSaveApiKey}
           onSaveRagflow={handleSaveRagflowConfig}
+          onSaveOpenAI={handleSaveOpenAIConfig}
           onModelChange={handleSaveModel}
           onProviderChange={handleProviderChange}
           onDismiss={() => setSettingsPanelVisible(false)}

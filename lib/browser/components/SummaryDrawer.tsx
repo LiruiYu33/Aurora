@@ -24,7 +24,7 @@ type SummaryDrawerProps = {
   model: string;
   ragflowApiKey?: string;
   ragflowBaseUrl?: string;
-  selectedProvider?: 'siliconflow' | 'ragflow';
+  selectedProvider?: 'siliconflow' | 'ragflow' | 'openai';
   error: string | null;
   isLoading: boolean;
   onDismiss: () => void;
