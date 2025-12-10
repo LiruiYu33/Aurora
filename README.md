@@ -2,35 +2,44 @@
 
 ## Overview
 
-Aurora is an innovative React Native-based browser application designed to seamlessly integrate artificial intelligence capabilities with web browsing. The application enables users to summarize web pages, engage in AI-powered conversations, and manage bookmarks with intelligent assistance.
+Aurora is an innovative React Native-based browser application designed to seamlessly integrate artificial intelligence capabilities with web browsing. **Unlike mainstream browsers like Chrome or Edge that lock users into their proprietary AI ecosystems, Aurora empowers you with complete control over your AI experience.**
+
+The application enables users to summarize web pages, engage in AI-powered conversations, and manage bookmarks with intelligent assistance, all while using **your own custom Large Language Model (LLM) APIs**. Whether you prefer SiliconFlow, RAGFlow, or OpenAI-compatible endpoints, Aurora lets you bring your own intelligence to the web.
 
 **Developer**: Lirui Yu  
 **Current Status**: Active Development (Prototype Stage)
 
+## Key Differentiators
+
+### 🔓 Freedom from Ecosystem Lock-in
+- **Chrome & Edge**: Force you to use Gemini or Copilot with limited customization.
+- **Aurora**: **Bring Your Own AI (BYOAI)**. You are not tied to a single provider. Use any OpenAI-compatible API, local models, or specialized knowledge bases.
+
+### 🧠 Customizable Intelligence
+- **Model Selection**: Choose the specific model that fits your needs (e.g., DeepSeek, Qwen, GPT-4, etc.) via SiliconFlow or other providers.
+- **Private Knowledge Bases**: Integrate with **RAGFlow** to use your own private data and knowledge bases for answering questions while browsing.
+- **Local & Cloud**: Support for both cloud-based APIs and local inference endpoints.
+
 ## Features
 
-### 🌐 Web Browsing
-- Full-featured in-app browser with web page rendering
-- Bookmark management system for saving favorite pages
-- Page summarization powered by AI models
-- Dynamic theme support (light/dark mode)
+### 🤖 Advanced AI Integration
+- **Webpage Summarization**: Instantly generate concise summaries of long articles using your chosen LLM.
+- **Context-Aware Chat**: Chat with your browser about the current page's content. The AI understands the context of what you are reading.
+- **Multi-Provider Support**:
+  - **SiliconFlow (硅基流动)**: Access high-performance Chinese LLMs (DeepSeek, Qwen, etc.).
+  - **RAGFlow**: Connect to your custom RAG (Retrieval-Augmented Generation) engines.
+  - **OpenAI Compatible**: Use any standard OpenAI-compatible API endpoint.
 
-### 🤖 AI Integration
-Supports multiple AI providers:
-- **SiliconFlow (硅基流动)**: High-performance Chinese LLM API
-- **RAGFlow**: Knowledge base Q&A engine with intelligent endpoint discovery
-
-### 💬 Conversation Capabilities
-- Interactive chat interface with AI models
-- Page context-aware conversations
-- Multi-turn dialogue support
-- Persistent conversation history
+### 🌐 Modern Web Browsing
+- Full-featured in-app browser with robust rendering.
+- Intelligent bookmark management.
+- Dynamic theme support (light/dark mode) with haptic feedback.
+- Privacy-focused: Your API keys and preferences are stored locally on your device.
 
 ### 🎨 User Experience
-- Haptic feedback on interactions
-- Parallax scrolling effects
-- Responsive UI components
-- Local storage for user preferences and API configurations
+- **Parallax Scrolling**: Smooth and engaging visual effects.
+- **Responsive Design**: Optimized for both iOS and Android devices.
+- **Native Performance**: Built with React Native for a fluid, native application feel.
 
 ## Project Structure
 
@@ -112,6 +121,11 @@ The application requires API keys for AI providers. Configure them in the app's 
    - Provide RAGFlow API key
    - The app automatically discovers Chat IDs or Agent IDs
 
+3. **OpenAI Compatible Configuration**
+   - Configure Base URL (e.g., `https://api.openai.com/v1` or a local proxy)
+   - Provide your API Key
+   - Compatible with any provider following the OpenAI API standard
+
 ### Backend Server
 
 The backend Java server runs on `http://localhost:8080` and provides:
@@ -144,6 +158,7 @@ cd /path/to/AuroraBackend
 ### AI APIs
 - **SiliconFlow**: OpenAI-compatible REST API
 - **RAGFlow**: Knowledge base with OpenAI-compatible endpoints
+- **OpenAI**: Standard OpenAI API support for custom endpoints
 
 ## Development
 
@@ -227,6 +242,8 @@ The application persists the following data locally:
 | `browser.siliconflow.model.v1` | Selected SiliconFlow model |
 | `browser.ragflow.apikey.v1` | RAGFlow API key |
 | `browser.ragflow.baseurl.v1` | RAGFlow base URL |
+| `browser.openai.apikey.v1` | OpenAI API key |
+| `browser.openai.baseurl.v1` | OpenAI Base URL |
 | `browser.ai.provider.v1` | Selected AI provider |
 
 ## Troubleshooting
