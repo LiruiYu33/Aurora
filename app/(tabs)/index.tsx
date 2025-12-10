@@ -33,10 +33,10 @@ import {
   BookmarksPanel,
   SummaryDrawer,
   SettingsPanel
-} from './components';
+} from '@/lib/browser/components';
 
 // 导入类型、常量、工具函数和样式
-import type { BrowserTab, QuickLink, RssNewsItem, BookmarkItem } from './types';
+import type { BrowserTab, QuickLink, RssNewsItem, BookmarkItem } from '@/lib/browser/types';
 import {
   DEFAULT_URL,
   START_PAGE_MARKER,
@@ -46,9 +46,9 @@ import {
   defaultQuickLinks,
   NAVBAR_HIDE_OFFSET,
   EXTRACT_CONTENT_SCRIPT
-} from './constants';
-import { createTab, formatInput } from './utils';
-import { styles } from './styles';
+} from '@/lib/browser/constants';
+import { createTab, formatInput } from '@/lib/browser/utils';
+import { styles } from '@/lib/browser/styles';
 
 // ==================== 主浏览器组件 ====================
 export default function SimpleBrowser() {
