@@ -1,5 +1,4 @@
 // ==================== 导入依赖 ====================
-// 从 Expo 图标库导入 Ionicons 组件，用于显示各种图标
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Asset } from 'expo-asset';
@@ -12,17 +11,9 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
-  Dimensions,
-  Easing,
-  Image,
   Keyboard,
-  KeyboardAvoidingView,
-  PanResponder,
   Platform,
-  Pressable,
-  ScrollView,
   Share,
-  StyleSheet,
   TextInput,
   View
 } from 'react-native';
@@ -32,227 +23,48 @@ import type { WebViewNavigation } from 'react-native-webview/lib/WebViewTypes';
 
 import { ThemedText } from '@/components/themed-text';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { API_BASE_URL, summarisePage } from '@/services/SummariseService';
+import { summarisePage } from '@/services/SummariseService';
 
-// ==================== 类型定义 ====================
-type BrowserTab = {
-  id: string;
-  url: string;
-  title: string;      // 网页标题
-  input: string;
-  isStartPage: boolean;
-  canGoBack: boolean;
-  canGoForward: boolean;
-  snapshot: string | null;
-};
+// 导入组件
+import {
+  ToolbarButton,
+  StartSurface,
+  TabSwitcher,
+  BookmarksPanel,
+  SummaryDrawer,
+  SettingsPanel
+} from './components';
 
-type QuickLink = {
-  label: string;
-  url: string;
-  icon?: string;
-};
-
-// ==================== 常量配置 ====================
-const DEFAULT_URL = 'https://www.google.com/';
-// 启动页标记（用于逻辑判断）
-const START_PAGE_MARKER = 'about:start';
-
-// 提取页面内容的脚本
-const EXTRACT_CONTENT_SCRIPT = `
-(function() {
-  try {
-    // 移除脚本、样式等标签
-    const clone = document.body.cloneNode(true);
-    const scripts = clone.querySelectorAll('script, style, noscript, iframe, svg');
-    scripts.forEach(el => el.remove());
-    
-    // 处理图片：将有意义的图片转换为文本描述
-    const images = clone.querySelectorAll('img');
-    images.forEach(img => {
-      const alt = img.alt || img.title;
-      if (alt && alt.length > 2) {
-        const textNode = document.createTextNode(\` [图片: \${alt}] \`);
-        img.parentNode.replaceChild(textNode, img);
-      } else {
-        img.remove();
-      }
-    });
-
-    // 处理视频：标记视频位置
-    const videos = clone.querySelectorAll('video');
-    videos.forEach(video => {
-      const textNode = document.createTextNode(' [视频内容] ');
-      video.parentNode.replaceChild(textNode, video);
-    });
-    
-    // 获取纯文本
-    let text = clone.innerText || clone.textContent || '';
-    
-    // 清理多余空白
-    text = text.replace(/\\s+/g, ' ').trim();
-    
-    // 限制长度（避免超过 API 限制）
-    const maxLength = 12000;
-    if (text.length > maxLength) {
-      text = text.substring(0, maxLength) + '...';
-    }
-    
-    window.ReactNativeWebView.postMessage(JSON.stringify({
-      type: 'PAGE_CONTENT',
-      content: text
-    }));
-  } catch (e) {
-    window.ReactNativeWebView.postMessage(JSON.stringify({
-      type: 'PAGE_CONTENT_ERROR',
-      error: e.message
-    }));
-  }
-})();
-true;
-`;
-
-const createTab = (): BrowserTab => ({
-  id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-  url: START_PAGE_MARKER,
-  title: '启动页',
-  input: '',
-  isStartPage: true,
-  canGoBack: false,
-  canGoForward: false,
-  snapshot: null,
-});
-
-// 预设的快捷链接列表（这些是默认显示的）
-const defaultQuickLinks: QuickLink[] = [
-  { label: 'IT之家', url: 'https://www.ithome.com/', icon: '📰' },
-  { label: 'Google', url: 'https://www.google.com/', icon: '🔍' },
-  { label: 'Apple', url: 'https://www.apple.com/', icon: '🍎' },
-];
-
-// RSS 新闻源地址
-const RSS_URL = 'https://www.chinanews.com.cn/rss/scroll-news.xml';
-
-// RSS 新闻条目类型
-type RssNewsItem = {
-  title: string;   // 新闻标题
-  link: string;    // 新闻链接
-};
-
-// AsyncStorage 的存储键名，用于保存用户自定义的快捷链接
-const QUICK_LINK_STORAGE_KEY = 'browser.customQuickLinks.v1';
-// AsyncStorage 的存储键名，用于保存用户收藏夹
-const BOOKMARKS_STORAGE_KEY = 'browser.bookmarks.v1';
-// AsyncStorage 的存储键名，用于保存启动页背景图片 URI
-const START_PAGE_BG_STORAGE_KEY = 'browser.startPageBgImage.v1';
-
-// 收藏夹项目类型
-type BookmarkItem = {
-  id: string;       // 唯一标识符
-  title: string;    // 收藏标题
-  url: string;      // 收藏网址
-  createdAt: number; // 创建时间戳
-};
-
-// ==================== 导航栏动画配置 ====================
-// 导航栏隐藏位移（要足够大确保完全隐藏，包括底部安全区域）
-const NAVBAR_HIDE_OFFSET = 180;
-
-// ==================== 工具函数 ====================
-/**
- * 格式化用户输入的地址
- * @param rawValue - 用户在地址栏输入的原始内容
- * @returns 格式化后的 URL 字符串
- * 
- * 处理逻辑：
- * 1. 如果是空输入，返回默认 URL
- * 2. 如果已有 http:// 或 https://，直接返回
- * 3. 如果包含点号且无空格（疑似域名），自动添加 https://
- * 4. 其他情况视为搜索关键词，通过 Google 搜索
- */
-const formatInput = (rawValue: string) => {
-  const value = rawValue.trim();  // 去除首尾空格
-  if (!value) {
-    return DEFAULT_URL;  // 空输入返回默认地址
-  }
-  // 检查是否已包含协议头
-  if (value.startsWith('http://') || value.startsWith('https://')) {
-    return value;  // 已有协议，直接返回
-  }
-  // 判断是否像域名（包含点号且无空格）
-  if (value.includes('.') && !value.includes(' ')) {
-    return `https://${value}`;  // 自动添加 https://
-  }
-  // 其他情况当作搜索词，使用 Google 搜索
-  // encodeURIComponent 将搜索词转义为 URL 安全格式
-  return `https://www.google.com/search?q=${encodeURIComponent(value)}`;
-};
-
-// ==================== 滑动手势常量 ====================
-// 手势调节常量（便于手动调参）
-// 需要更灵敏就调小数值，需要更稳就调大
-const SWIPE_MIN_DRAG = 0;              // 识别向上滑动的最小距离，0=任何向上移动都响应
-const SWIPE_DIRECTION_RATIO = 0;       // 横向/纵向的容错比，0=只要有向上分量就拦截（未使用，保留）
-const SWIPE_RELEASE_VELOCITY = 0;      // 松手时的向上速度阈值，0=任何向上速度都触发
-const SWIPE_CLOSE_DISTANCE = 100;      // 上滑超过该距离即可判定关闭（越小越容易关闭，建议50-150）
-
-// ==================== 标签页切换器布局常量 ====================
-// 调整这个值来控制左右标签页的间距，越小越近（可以看到更多相邻卡片）
-const TAB_CARD_SPACING = 0.8;         // 卡片间距系数，1=整屏宽度，0.85=可以微微看到两侧卡片
+// 导入类型、常量、工具函数和样式
+import type { BrowserTab, QuickLink, RssNewsItem, BookmarkItem } from './types';
+import {
+  DEFAULT_URL,
+  START_PAGE_MARKER,
+  QUICK_LINK_STORAGE_KEY,
+  BOOKMARKS_STORAGE_KEY,
+  START_PAGE_BG_STORAGE_KEY,
+  defaultQuickLinks,
+  NAVBAR_HIDE_OFFSET,
+  EXTRACT_CONTENT_SCRIPT
+} from './constants';
+import { createTab, formatInput } from './utils';
+import { styles } from './styles';
 
 // ==================== 主浏览器组件 ====================
-/**
- * SimpleBrowser - 简易浏览器组件
- * 
- * 功能特性：
- * - 多标签页管理（新建、关闭、切换）
- * - WebView 网页加载
- * - 地址栏输入和搜索
- * - 前进/后退导航
- * - 刷新页面
- * - 标签页滑动关闭
- * - 自定义快捷链接并持久化存储
- */
 export default function SimpleBrowser() {
   // ==================== 状态管理 ====================
-  
-  // 使用 useRef 保存初始标签页，避免每次渲染重新创建
-  // ref.current 在组件整个生命周期中保持不变
   const initialTabRef = useRef<BrowserTab>(createTab());
-  
-  // tabs: 所有标签页的数组
-  // useState 返回 [state, setState]，用于管理可变状态
-  // 初始值为包含一个初始标签页的数组
   const [tabs, setTabs] = useState<BrowserTab[]>([initialTabRef.current]);
-  
-  // activeTabId: 当前激活的标签页 ID
   const [activeTabId, setActiveTabId] = useState(initialTabRef.current.id);
-  
-  // isSwitcherVisible: 标签页切换器是否可见（全屏浮层）
   const [isSwitcherVisible, setSwitcherVisible] = useState(false);
-  // shouldDismissSwitcher: 触发标签页切换器关闭动画
   const [shouldDismissSwitcher, setShouldDismissSwitcher] = useState(false);
-  
-  // canGoBack: 当前页面是否可以后退
   const [canGoBack, setCanGoBack] = useState(false);
-  
-  // canGoForward: 当前页面是否可以前进
   const [canGoForward, setCanGoForward] = useState(false);
-  
-  // isLoading: 页面是否正在加载
   const [isLoading, setIsLoading] = useState(false);
-  
-  // customQuickLinks: 用户自定义的快捷链接数组
   const [customQuickLinks, setCustomQuickLinks] = useState<QuickLink[]>([]);
-  
-  // startPageBgImage: 启动页背景图片 URI
   const [startPageBgImage, setStartPageBgImage] = useState<string | null>(null);
-  
-  // rssNews: 从 RSS 拉取的新闻列表
   const [rssNews, setRssNews] = useState<RssNewsItem[]>([]);
-  // isLoadingRss: RSS 是否正在加载
   const [isLoadingRss, setIsLoadingRss] = useState(true);
-  
-  // 启动页 HTML 文件的本地 URI
   const [startPageUrl, setStartPageUrl] = useState<string | null>(null);
   
   // 总结状态
@@ -266,7 +78,7 @@ export default function SimpleBrowser() {
   // 下拉刷新状态
   const [pullDownDistance, setPullDownDistance] = useState(0);
   const pullDownY = useRef(new Animated.Value(0)).current;
-  const PULL_REFRESH_THRESHOLD = 300;  // 下拉刷新阈值（单位：像素）
+  const PULL_REFRESH_THRESHOLD = 300;
   
   // API Key 、模型和设置面板状态
   const [apiKey, setApiKey] = useState<string>('');
@@ -347,31 +159,16 @@ export default function SimpleBrowser() {
   }, []);
 
   // ==================== 派生状态（计算值） ====================
-  
-  // currentInput: 当前激活标签页的地址栏输入内容
-  // array.find() 查找第一个匹配的元素
-  // ?. 可选链操作符，如果前面的值为 null/undefined，返回 undefined
-  // ?? '' 空值合并操作符，左侧为 null/undefined 时使用右侧的默认值
   const currentInput = tabs.find((tab) => tab.id === activeTabId)?.input ?? '';
-  
-  // activeTab: 当前激活的标签页对象
-  // 如果找不到，fallback 到第一个标签页
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0];
-  
-  // combinedQuickLinks: 合并默认快捷链接和用户自定义快捷链接
   const combinedQuickLinks = [...defaultQuickLinks, ...customQuickLinks];
   
-  // webViewRef: WebView 组件的引用，用于调用其方法（如 goBack、reload）
-  // useRef<WebView>(null) 创建一个可存储 WebView 实例的引用
   const webViewRef = useRef<WebView>(null);
-  // 存储所有标签页对应的包装 View 引用，用于截图（captureRef 不能直接捕获 WebView）
-  const webViewWrapperRefs = useRef<Record<string, View | null>>({});
-  // 防止导航时隐藏导航栏的标志
+  const webViewWrapperRefs = useRef<Record<string, any>>({});
   const isNavigatingRef = useRef(false);
-  // 总结超时计时器
-  const summaryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const summaryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // 将已保存的启动页背景同步给 WebView（处理首屏加载和切换回启动页的场景）
+  // 将已保存的启动页背景同步给 WebView
   const activeStartTabId = activeTab?.id;
   const isActiveTabStartPage = activeTab?.isStartPage;
   useEffect(() => {
@@ -388,25 +185,17 @@ export default function SimpleBrowser() {
   }, [startPageBgImage, startPageUrl, activeStartTabId, isActiveTabStartPage]);
   
   // ==================== 导航栏显示/隐藏状态 ====================
-  // 导航栏是否可见
   const [isNavBarVisible, setIsNavBarVisible] = useState(true);
-  // 导航栏位移动画值
   const navBarTranslateY = useRef(new Animated.Value(0)).current;
-  // WebView 容器淡入淡出动画
   const webViewOpacity = useRef(new Animated.Value(1)).current;
-  // 标签页切换缩放和淡入淡出
   const tabSwitchScale = useRef(new Animated.Value(1)).current;
   const tabSwitchOpacity = useRef(new Animated.Value(1)).current;
-  // 标签页展开动画（从卡片到全屏）
   const tabExpandScale = useRef(new Animated.Value(1)).current;
   const tabExpandOpacity = useRef(new Animated.Value(1)).current;
-  // 导航栏按钮点击动画值（每个按钮一个）
   const buttonAnimations = useRef<Record<string, { scale: Animated.Value; opacity: Animated.Value }>>({}).current;
   
   // ==================== 收藏夹状态 ====================
-  // 收藏夹列表
   const [bookmarks, setBookmarks] = useState<BookmarkItem[]>([]);
-  // 收藏夹面板是否可见
   const [isBookmarksPanelVisible, setBookmarksPanelVisible] = useState(false);
   
   // ==================== 键盘状态 ====================
@@ -417,7 +206,6 @@ export default function SimpleBrowser() {
     const keyboardWillShow = Keyboard.addListener(
       Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
       (e) => {
-        // use native driver because we only consume this value in translateY
         Animated.timing(keyboardHeight, {
           toValue: e.endCoordinates.height,
           duration: e.duration || 250,
@@ -443,66 +231,38 @@ export default function SimpleBrowser() {
   }, []);
 
   // ==================== 快捷链接管理函数 ====================
-  
-  /**
-   * 持久化保存自定义快捷链接到本地存储
-   * @param next - 要保存的快捷链接数组
-   */
   const persistCustomQuickLinks = async (next: QuickLink[]) => {
     try {
-      // JSON.stringify() 将对象转为 JSON 字符串
-      // AsyncStorage.setItem() 异步保存键值对
       await AsyncStorage.setItem(QUICK_LINK_STORAGE_KEY, JSON.stringify(next));
     } catch (error) {
       console.warn('保存快捷网址失败', error);
     }
   };
 
-  /**
-   * 添加新的自定义快捷链接
-   * @param label - 链接名称
-   * @param rawUrl - 原始 URL（可能不完整）
-   * @throws {Error} 当输入为空或名称重复时抛出错误
-   */
   const handleAddQuickLink = async (label: string, rawUrl: string) => {
-    // 去除首尾空格，规范化输入
     const normalizedLabel = label.trim();
     const normalizedRawUrl = rawUrl.trim();
     
-    // 验证：不能为空
     if (!normalizedLabel || !normalizedRawUrl) {
       throw new Error('请输入名称和网址');
     }
     
-    // 使用 formatInput 格式化 URL（自动添加 https:// 等）
     const formattedUrl = formatInput(normalizedRawUrl);
     
-    // array.some() 检查数组中是否有元素满足条件
-    // 这里检查是否存在同名链接（不区分大小写）
     const duplicate = combinedQuickLinks.some(
       (item) => item.label.toLowerCase() === normalizedLabel.toLowerCase(),
     );
     
     if (duplicate) {
-      // 存在重复，抛出错误
       throw new Error('已存在同名快捷方式');
     }
     
-    // 创建新数组：展开现有链接 + 新链接
     const next = [...customQuickLinks, { label: normalizedLabel, url: formattedUrl }];
-    
-    // 更新状态（触发重新渲染）
     setCustomQuickLinks(next);
-    
-    // 异步保存到本地存储
     await persistCustomQuickLinks(next);
   };
 
   // ==================== 启动页背景图片管理函数 ====================
-  
-  /**
-   * 选择背景图片
-   */
   const handleSelectBackgroundImage = async () => {
     try {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -519,8 +279,6 @@ export default function SimpleBrowser() {
       
       if (!result.canceled && result.assets[0]) {
         const pickedUri = result.assets[0].uri;
-        
-        // 读取图片为 base64，转换为 data URL
         const base64 = await FileSystem.readAsStringAsync(pickedUri, {
           encoding: 'base64',
         });
@@ -528,11 +286,8 @@ export default function SimpleBrowser() {
         
         setStartPageBgImage(dataUrl);
         
-        // 保存到本地存储
         try {
           await AsyncStorage.setItem(START_PAGE_BG_STORAGE_KEY, dataUrl);
-          
-          // 立即刷新页面显示背景 - 使用 postMessage 发送大数据
           setTimeout(() => {
             const message = JSON.stringify({
               type: 'SET_BACKGROUND',
@@ -549,15 +304,10 @@ export default function SimpleBrowser() {
     }
   };
   
-  /**
-   * 重置背景图片
-   */
   const handleResetBackground = async () => {
     setStartPageBgImage(null);
     try {
       await AsyncStorage.removeItem(START_PAGE_BG_STORAGE_KEY);
-      
-      // 立即刷新页面恢复默认背景
       setTimeout(() => {
         const message = JSON.stringify({
           type: 'SET_BACKGROUND',
@@ -570,9 +320,6 @@ export default function SimpleBrowser() {
     }
   };
   
-  /**
-   * 保存 API Key
-   */
   const handleSaveApiKey = async (key: string) => {
     try {
       await AsyncStorage.setItem(API_KEY_STORAGE_KEY, key);
@@ -606,9 +353,6 @@ export default function SimpleBrowser() {
     }
   };
   
-  /**
-   * 保存模型选择
-   */
   const handleSaveModel = async (model: string) => {
     try {
       await AsyncStorage.setItem(MODEL_STORAGE_KEY, model);
@@ -618,9 +362,6 @@ export default function SimpleBrowser() {
     }
   };
   
-  /**
-   * 总结当前网页
-   */
   const handleSummarize = async () => {
     if (!activeTab || activeTab.isStartPage) {
       setSummaryError('启动页无需总结');
@@ -636,7 +377,6 @@ export default function SimpleBrowser() {
     
     if (isSummarizing) return;
     
-    // 如果当前 URL 已经总结过且有内容，直接显示
     if (activeTab.url === lastSummarizedUrl && summaryContent && !summaryError) {
       setSummaryDrawerVisible(true);
       return;
@@ -648,17 +388,15 @@ export default function SimpleBrowser() {
       setSummaryContent('');
       setSummaryDrawerVisible(true);
       
-      // 注入脚本提取内容
       webViewRef.current?.injectJavaScript(EXTRACT_CONTENT_SCRIPT);
       
-      // 设置超时
       if (summaryTimeoutRef.current) clearTimeout(summaryTimeoutRef.current);
       summaryTimeoutRef.current = setTimeout(() => {
         if (isSummarizing) {
           setIsSummarizing(false);
           setSummaryError('提取页面内容超时\n请重试或检查网络');
         }
-      }, 15000); // 15秒超时
+      }, 15000);
       
     } catch (error: any) {
       setSummaryError(error.message || '总结失败\n请确保后端服务已启动');
@@ -667,11 +405,6 @@ export default function SimpleBrowser() {
   };
 
   // ==================== 收藏夹管理函数 ====================
-  
-  /**
-   * 持久化保存收藏夹到本地存储
-   * @param next - 要保存的收藏夹数组
-   */
   const persistBookmarks = async (next: BookmarkItem[]) => {
     try {
       await AsyncStorage.setItem(BOOKMARKS_STORAGE_KEY, JSON.stringify(next));
@@ -680,23 +413,19 @@ export default function SimpleBrowser() {
     }
   };
 
-  /**
-   * 添加当前页面到收藏夹
-   */
   const handleAddBookmark = async () => {
     if (!activeTab || activeTab.isStartPage || !activeTab.url) {
-      return; // 启动页或无URL时不能收藏
+      return;
     }
     
-    // 检查是否已收藏
     const exists = bookmarks.some(b => b.url === activeTab.url);
     if (exists) {
-      return; // 已存在，不重复添加
+      return;
     }
     
     const newBookmark: BookmarkItem = {
       id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      title: activeTab.title || activeTab.url.replace(/^https?:\/\//, '').split('/')[0], // 使用页面标题
+      title: activeTab.title || activeTab.url.replace(/^https?:\/\//, '').split('/')[0],
       url: activeTab.url,
       createdAt: Date.now(),
     };
@@ -706,20 +435,12 @@ export default function SimpleBrowser() {
     await persistBookmarks(next);
   };
 
-  /**
-   * 从收藏夹删除
-   * @param bookmarkId - 要删除的收藏ID
-   */
   const handleDeleteBookmark = async (bookmarkId: string) => {
     const next = bookmarks.filter(b => b.id !== bookmarkId);
     setBookmarks(next);
     await persistBookmarks(next);
   };
 
-  /**
-   * 打开收藏的页面
-   * @param url - 收藏的网址
-   */
   const handleOpenBookmark = (url: string) => {
     if (activeTab) {
       updateTab(activeTab.id, { url, input: url, isStartPage: false });
@@ -727,39 +448,21 @@ export default function SimpleBrowser() {
     setBookmarksPanelVisible(false);
   };
 
-  /**
-   * 检查当前页面是否已收藏
-   */
   const isCurrentPageBookmarked = useMemo(() => {
     if (!activeTab || activeTab.isStartPage || !activeTab.url) return false;
     return bookmarks.some(b => b.url === activeTab.url);
   }, [activeTab, bookmarks]);
 
   // ==================== 标签页管理函数 ====================
-  
-  /**
-   * 更新指定标签页的部分属性
-   * @param tabId - 要更新的标签页 ID
-   * @param updates - 部分更新的属性（Partial<BrowserTab> 表示所有属性都是可选的）
-   */
   const updateTab = (tabId: string, updates: Partial<BrowserTab>) => {
-    // setTabs 接受函数参数，prev 是当前状态值
-    // array.map() 遍历数组，对每个元素执行转换
-    // tab.id === tabId ? {...tab, ...updates} : tab
-    //   - 如果是目标标签页，使用对象展开合并更新
-    //   - 否则保持原样
     setTabs((prev) => prev.map((tab) => (tab.id === tabId ? { ...tab, ...updates } : tab)));
   };
 
-  /**
-   * 为当前活跃标签页捕获截图（切换标签页前调用）
-   */
   const captureCurrentTabSnapshot = async () => {
     if (!activeTab) return;
     const wrapperRef = webViewWrapperRefs.current[activeTab.id];
     if (!wrapperRef) return;
     try {
-      // 等待一帧确保渲染完成
       await new Promise(requestAnimationFrame);
       const uri = await captureRef(wrapperRef, {
         format: 'jpg',
@@ -772,86 +475,56 @@ export default function SimpleBrowser() {
     }
   };
 
-  /**
-   * 创建新标签页
-   * @param stayInSwitcher - 是否停留在标签页切换器中（默认 false，会关闭切换器）
-   */
   const handleNewTab = async (stayInSwitcher = false) => {
-    // 只有在非切换器模式下才截图当前标签页
     if (!isSwitcherVisible) {
       await captureCurrentTabSnapshot();
     }
     
-    // 重置动画值确保新标签页正确显示
     tabSwitchScale.setValue(1);
     tabSwitchOpacity.setValue(1);
     tabExpandScale.setValue(1);
     tabExpandOpacity.setValue(1);
     
-    // 创建新标签页
     const nextTab = createTab();
-    
-    // 将新标签页添加到数组末尾
     setTabs((prev) => [...prev, nextTab]);
-    
-    // 激活新标签页
     setActiveTabId(nextTab.id);
-    
-    // 新标签页为启动页，无历史记录
     setCanGoBack(false);
     setCanGoForward(false);
     
-    // 根据参数决定是否关闭切换器
     if (!stayInSwitcher) {
       setSwitcherVisible(false);
     }
   };
 
-  /**
-   * 关闭指定标签页
-   * @param targetId - 要关闭的标签页 ID
-   * @param stayInSwitcher - 是否停留在标签页切换器中
-   */
   const handleCloseTab = (targetId: string, stayInSwitcher = false) => {
     setTabs((prev) => {
-      // 如果只剩一个标签页，不关闭，而是替换为新的空白标签页
       if (prev.length === 1) {
-        const fresh = createTab();  // 创建新标签页
-        setActiveTabId(fresh.id);   // 激活新标签页
+        const fresh = createTab();
+        setActiveTabId(fresh.id);
         setCanGoBack(false);
         setCanGoForward(false);
         return [fresh];
       }
-      // 过滤掉目标标签页
-      // array.filter() 返回满足条件的元素组成的新数组
+      
       const filtered = prev.filter((tab) => tab.id !== targetId);
       
-      // 如果关闭的是当前激活的标签页，需要切换到其他标签页
       if (targetId === activeTabId) {
-        // 选择 fallback 标签页：优先选最后一个，否则选第一个
-        // filtered[filtered.length - 1] 获取数组最后一个元素
         const fallbackId = filtered[filtered.length - 1]?.id ?? filtered[0]?.id;
-        
         if (fallbackId) {
-          setActiveTabId(fallbackId);  // 激活 fallback 标签页
+          setActiveTabId(fallbackId);
         }
-        
-        // 重置导航状态（新激活的标签页可能无历史记录）
         setCanGoBack(false);
         setCanGoForward(false);
       }
       
-      // 返回过滤后的数组（这会成为新的 tabs 状态）
       return filtered;
     });
     
-    // 根据参数决定是否关闭切换器
     if (!stayInSwitcher) {
       setSwitcherVisible(false);
     }
   };
 
-  // 关闭所有标签页并回到一个全新的启动页
   const handleCloseAllTabs = () => {
     const fresh = createTab();
     setTabs([fresh]);
@@ -861,7 +534,6 @@ export default function SimpleBrowser() {
     setSwitcherVisible(false);
   };
 
-  // 长按标签页按钮弹出操作：关闭当前或全部标签页
   const handleTabButtonLongPress = () => {
     const closeCurrent = () => {
       if (activeTabId) {
@@ -872,7 +544,7 @@ export default function SimpleBrowser() {
       ActionSheetIOS.showActionSheetWithOptions(
         {
           options: ['关闭当前标签页', '关闭所有标签页', '取消'],
-          destructiveButtonIndices: [0, 1],
+          destructiveButtonIndex: 1,
           cancelButtonIndex: 2,
         },
         (buttonIndex) => {
@@ -890,90 +562,60 @@ export default function SimpleBrowser() {
   };
 
   // ==================== 地址栏和导航事件处理 ====================
-  
-  /**
-   * 处理地址栏提交（用户按下回车或"前往"按钮）
-   */
   const handleSubmit = () => {
-    // 验证：activeTab 存在且输入不为空
     if (!activeTab || !activeTab.input.trim()) {
-      return;  // 无效输入，直接返回
+      return;
     }
     
-    // 格式化输入为完整 URL
     const target = formatInput(activeTab.input);
     
-    // 如果目标URL与当前URL相同，只需重新加载页面
     if (target === activeTab.url) {
       webViewRef.current?.reload();
-      // 更新输入框显示为规范化的URL
       updateTab(activeTab.id, { input: target });
       return;
     }
     
-    // 导航前淡出动画
     Animated.timing(webViewOpacity, {
       toValue: 0.6,
       duration: 100,
       useNativeDriver: true,
     }).start();
     
-    // 更新标签页：设置 url、input，并标记为非启动页
     updateTab(activeTab.id, { url: target, input: target, isStartPage: false });
   };
 
-  /**
-   * 处理地址栏文本变化（用户正在输入）
-   * @param text - 最新的输入文本
-   */
   const handleAddressChange = (text: string) => {
     if (activeTab) {
-      // 只更新 input 字段，不更新 url（不立即导航）
       updateTab(activeTab.id, { input: text });
     }
   };
 
-  /**
-   * 处理快捷链接点击（从启动页或预设链接）
-   * @param rawValue - 链接地址（可能不完整）
-   */
   const handleOpenPreset = (rawValue: string) => {
     if (!activeTab) {
       return;
     }
     
-    // 点击快捷链接时的淡出淡入动画
     Animated.timing(webViewOpacity, {
       toValue: 0.4,
       duration: 100,
       useNativeDriver: true,
     }).start();
     
-    // 格式化地址
     const target = formatInput(rawValue);
-    
-    // 更新标签页并导航
     updateTab(activeTab.id, { url: target, input: target, isStartPage: false });
   };
 
-  /**
-   * 分享当前页面
-   */
   const handleShare = async () => {
     if (!activeTab) return;
     const urlToShare = activeTab.isStartPage ? DEFAULT_URL : activeTab.url;
     if (!urlToShare) return;
     try {
-      // 仅传 url，避免 iOS ShareSheet 显示两条目
       await Share.share({ url: urlToShare });
     } catch (error) {
       console.warn('分享失败', error);
     }
   };
 
-  /**
-   * 处理后退按钮（支持返回启动页）
-   */
   const handleGoBack = () => {
     if (!activeTab) return;
     
@@ -981,13 +623,11 @@ export default function SimpleBrowser() {
       return;
     }
     
-    // 设置导航标志，防止隐藏导航栏
     isNavigatingRef.current = true;
     setTimeout(() => {
       isNavigatingRef.current = false;
     }, 800);
     
-    // 后退时的过渡动画
     Animated.timing(webViewOpacity, {
       toValue: 0.5,
       duration: 150,
@@ -1000,11 +640,9 @@ export default function SimpleBrowser() {
       }).start();
     });
     
-    // 如果 WebView 可以后退，且当前不在启动页（通过 URL 判断）
     if (canGoBack && activeTab.url !== startPageUrl && activeTab.url !== START_PAGE_MARKER) {
       webViewRef.current?.goBack();
     } else {
-      // 返回启动页
       updateTab(activeTab.id, { 
         isStartPage: true, 
         url: START_PAGE_MARKER, 
@@ -1017,13 +655,9 @@ export default function SimpleBrowser() {
     }
   };
 
-  /**
-   * 处理 WebView 导航状态变化
-   */
   const handleNavChange = (navState: WebViewNavigation) => {
     if (!activeTab) return;
     
-    // 检测是否在启动页
     const isOnStartPage = navState.url === startPageUrl || navState.url === START_PAGE_MARKER || navState.url.includes('start-page.html');
     
     const canGoBackToWeb = navState.canGoBack;
@@ -1032,7 +666,6 @@ export default function SimpleBrowser() {
     setCanGoBack(canGoBackToWeb || canGoBackToStart);
     setCanGoForward(navState.canGoForward);
     
-    // 获取页面标题，如果没有则使用域名
     const pageTitle = isOnStartPage 
       ? '启动页' 
       : (navState.title || navState.url.replace(/^https?:\/\//, '').split('/')[0]);
@@ -1047,8 +680,6 @@ export default function SimpleBrowser() {
     });
   };
 
-  // 进入标签页切换器时只截图当前活跃标签页（其他标签页保留之前的截图）
-  // 因为非活跃标签页 opacity 为 0，captureRef 无法截图
   useEffect(() => {
     if (isSwitcherVisible) {
       captureCurrentTabSnapshot();
@@ -1056,9 +687,6 @@ export default function SimpleBrowser() {
   }, [isSwitcherVisible]);
 
   // ==================== 导航栏显示/隐藏动画 ====================
-  /**
-   * 显示导航栏
-   */
   const showNavBar = () => {
     if (!isNavBarVisible) {
       setIsNavBarVisible(true);
@@ -1071,9 +699,6 @@ export default function SimpleBrowser() {
     }
   };
 
-  /**
-   * 隐藏导航栏
-   */
   const hideNavBar = () => {
     if (isNavBarVisible) {
       setIsNavBarVisible(false);
@@ -1086,13 +711,8 @@ export default function SimpleBrowser() {
     }
   };
 
-  /**
-   * 处理 WebView 滚动事件的 JS 代码
-   * 注入到页面中监听滚动方向和下拉手势
-   */
   const scrollListenerJS = `
     (function() {
-      // 添加 CSS 让内容能穿过顶部安全区域，并用网页背景色填充
       const style = document.createElement('style');
       style.textContent = \`
         html {
@@ -1107,7 +727,6 @@ export default function SimpleBrowser() {
       \`;
       document.head.appendChild(style);
       
-      // 获取网页背景色并应用到安全区域
       const updateBackgroundColor = () => {
         const bodyStyle = window.getComputedStyle(document.body);
         const bgColor = bodyStyle.backgroundColor;
@@ -1122,7 +741,6 @@ export default function SimpleBrowser() {
       let lastScrollY = 0;
       let ticking = false;
       
-      // 下拉刷新手势
       let touchStartY = 0;
       let touchStartX = 0;
       let touchStartScrollY = 0;
@@ -1143,7 +761,6 @@ export default function SimpleBrowser() {
         const currentX = e.touches[0].clientX;
         const currentScrollY = window.scrollY;
         
-        // 宽松的顶部检测
         const isAtTop = currentScrollY <= 10;
         const startedAtTop = touchStartScrollY <= 10;
         
@@ -1151,9 +768,6 @@ export default function SimpleBrowser() {
           const dy = currentY - touchStartY;
           const dx = currentX - touchStartX;
           
-          // 只有当页面处于顶部，且手势开始时也在顶部时，才允许下拉刷新
-          // 这避免了从页面中部向上滚动到顶部时误触发
-          // 同时满足用户要求的"网页没有被拖动"（即scroll位置未变）的前提
           if (startedAtTop && isAtTop && dy > 0 && Math.abs(dy) > Math.abs(dx)) {
              if (dy > 5) {
                isTracking = true;
@@ -1163,8 +777,6 @@ export default function SimpleBrowser() {
         }
         
         if (isTracking) {
-          // 如果页面发生了明显的向下滚动（离开了顶部区域），说明用户意图是滚动网页
-          // 此时必须取消下拉刷新，满足"网页被拖动...不能启用"的要求
           if (currentScrollY > 10) {
             isTracking = false;
             accumulatedPull = 0;
@@ -1211,7 +823,6 @@ export default function SimpleBrowser() {
             const currentScrollY = window.scrollY;
             const delta = currentScrollY - lastScrollY;
             
-            // 只在滚动超过一定距离时才发送消息
             if (Math.abs(delta) > 5) {
               window.ReactNativeWebView.postMessage(JSON.stringify({
                 type: 'scroll',
@@ -1229,15 +840,11 @@ export default function SimpleBrowser() {
     true;
   `;
 
-  /**
-   * 处理 WebView 发送的消息（滚动事件、启动页事件、下拉手势）
-   */
   const handleWebViewMessage = async (event: { nativeEvent: { data: string } }) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
       
       if (data.type === 'pull') {
-        // 下拉中
         console.log('Pull distance:', data.distance);
         setPullDownDistance(data.distance);
         Animated.timing(pullDownY, {
@@ -1246,7 +853,6 @@ export default function SimpleBrowser() {
           useNativeDriver: true,
         }).start();
       } else if (data.type === 'pullEnd') {
-        // 松手 - 使用传递的距离而不是状态中的距离
         const distance = data.distance || pullDownDistance;
         console.log('Pull end, distance:', distance, 'refresh threshold:', PULL_REFRESH_THRESHOLD);
         
@@ -1260,64 +866,52 @@ export default function SimpleBrowser() {
         }).start();
         
         if (distance >= PULL_REFRESH_THRESHOLD) {
-          // 刷新页面
           console.log('Reloading page');
           webViewRef.current?.reload();
-          // 刷新时清除总结缓存
           setLastSummarizedUrl(null);
         } else {
           console.log('Distance too short, no action');
         }
       } else if (data.type === 'pullCancel') {
-        // 取消下拉
         setPullDownDistance(0);
         Animated.spring(pullDownY, {
           toValue: 0,
           useNativeDriver: true,
         }).start();
       } else if (data.type === 'scroll') {
-        // 如果正在导航中或在启动页，不响应滚动事件隐藏导航栏
         if (isNavigatingRef.current || activeTab?.isStartPage) {
-          showNavBar(); // 保持导航栏显示
+          showNavBar();
           return;
         }
         
         if (data.direction === 'down' && data.scrollY > 50) {
-          // 向下滚动且不在顶部，隐藏导航栏
           hideNavBar();
         } else if (data.direction === 'up') {
-          // 向上滚动，显示导航栏
           showNavBar();
         }
       } else if (data.type === 'requestQuickLinks') {
-        // 启动页请求快捷链接数据
         const linksToSend = combinedQuickLinks.map(link => ({
           label: link.label,
           url: link.url,
           icon: link.icon || '🔗'
         }));
         
-        // 通过 evaluateJavaScript 发送数据到页面
         webViewRef.current?.injectJavaScript(`
           window.setQuickLinks(${JSON.stringify(linksToSend)});
           true;
         `);
       } else if (data.type === 'addQuickLink') {
-        // 启动页添加快捷链接
         handleAddQuickLink(data.label, data.url);
       } else if (data.type === 'deleteQuickLink') {
-        // 启动页删除快捷链接
         const index = data.index;
         const defaultLinksCount = defaultQuickLinks.length;
         
         if (index >= defaultLinksCount) {
-          // 删除的是自定义链接
           const customIndex = index - defaultLinksCount;
           const next = customQuickLinks.filter((_, i) => i !== customIndex);
           setCustomQuickLinks(next);
           persistCustomQuickLinks(next);
           
-          // 刷新页面显示
           const linksToSend = [...defaultQuickLinks, ...next].map(link => ({
             label: link.label,
             url: link.url,
@@ -1330,13 +924,10 @@ export default function SimpleBrowser() {
           `);
         }
       } else if (data.type === 'selectBackgroundImage') {
-        // 启动页选择背景图片
         handleSelectBackgroundImage();
       } else if (data.type === 'resetBackground') {
-        // 启动页重置背景图片
         handleResetBackground();
       } else if (data.type === 'requestBackgroundImage') {
-        // 启动页请求背景图片
         const bgImageUri = startPageBgImage || '';
         const message = JSON.stringify({
           type: 'SET_BACKGROUND',
@@ -1344,10 +935,8 @@ export default function SimpleBrowser() {
         });
         webViewRef.current?.postMessage(message);
       } else if (data.type === 'PAGE_CONTENT') {
-        // 收到页面内容，开始调用 API 总结
         if (summaryTimeoutRef.current) clearTimeout(summaryTimeoutRef.current);
         
-        // 保存页面内容供对话使用
         setPageContentForChat(data.content);
         
         try {
@@ -1365,7 +954,6 @@ export default function SimpleBrowser() {
           setIsSummarizing(false);
         }
       } else if (data.type === 'PAGE_CONTENT_ERROR') {
-        // 提取内容失败
         if (summaryTimeoutRef.current) clearTimeout(summaryTimeoutRef.current);
         setSummaryError('无法提取页面内容: ' + data.error);
         setIsSummarizing(false);
@@ -1375,17 +963,10 @@ export default function SimpleBrowser() {
     }
   };
 
-  /**
-   * 处理标签页选择（从切换器点击标签页）
-   * @param tabId - 要激活的标签页 ID
-   */
   const handleSelectTab = async (tabId: string) => {
-    // 标签页选择通过 TabCard 的 onSelect 触发，已经包含退出动画
-    // 这里只需要更新状态
     setActiveTabId(tabId);
     setSwitcherVisible(false);
     
-    // 重置所有动画值
     tabSwitchScale.setValue(1);
     tabSwitchOpacity.setValue(1);
     tabExpandScale.setValue(1);
@@ -1421,7 +1002,6 @@ export default function SimpleBrowser() {
               accessibilityLabel="前进" 
               disabled={false} 
               onPress={() => {
-                // 设置导航标志，防止隐藏导航栏
                 isNavigatingRef.current = true;
                 setTimeout(() => {
                   isNavigatingRef.current = false;
@@ -1489,10 +1069,8 @@ export default function SimpleBrowser() {
             accessibilityLabel="标签页" 
             onPress={async () => {
               if (isSwitcherVisible) {
-                // 如果切换器已显示，触发关闭动画
                 setShouldDismissSwitcher(true);
               } else {
-                // 如果切换器未显示，截图并打开它
                 await captureCurrentTabSnapshot();
                 setSwitcherVisible(true);
               }
@@ -1506,23 +1084,16 @@ export default function SimpleBrowser() {
 
   // ==================== 主组件渲染 ====================
   return (
-    // View 容器，占满屏幕，让 WebView 延伸到状态栏区域
     <View style={[styles.fullScreen, { backgroundColor: isDark ? '#000' : '#fff' }]}>
-      {/* WebView 容器（占据主要空间） - 带标签页切换和展开动画 */}
       <Animated.View style={[
         styles.webViewWrapper, 
         { 
           backgroundColor: isDark ? '#000' : '#fff',
-          // 移除 scale transform 以提升性能
-          // 如需启用缩放动画，取消注释下行（会降低帧率）
-          // transform: [{ scale: Animated.multiply(tabSwitchScale, tabExpandScale) }],
           opacity: Animated.multiply(tabSwitchOpacity, tabExpandOpacity),
         }
       ]}>
-        {/* 为每个标签页渲染独立的WebView，通过显示/隐藏控制，避免切换时重新加载 */}
         {tabs.map((tab) => {
           const isActive = tab.id === activeTabId;
-          // 确定加载源：如果是启动页且资源已加载，使用本地文件 URI；否则使用 tab.url
           const source = (tab.isStartPage && startPageUrl) 
             ? { uri: startPageUrl } 
             : { uri: tab.url === START_PAGE_MARKER ? (startPageUrl || 'about:blank') : tab.url };
@@ -1532,9 +1103,7 @@ export default function SimpleBrowser() {
               key={tab.id}
               ref={(ref) => { webViewWrapperRefs.current[tab.id] = ref; }}
               style={[
-                  // 所有WebView包装器使用绝对定位铺满容器
                   { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: isDark ? '#000' : '#fff' },
-                  // 只显示活跃标签，非活跃标签彻底隐藏避免叠加
                   isActive
                     ? { opacity: webViewOpacity, zIndex: 2, display: 'flex' }
                     : { opacity: 0, zIndex: -1, display: 'none' },
@@ -1590,7 +1159,6 @@ export default function SimpleBrowser() {
           );
         })}
         
-        {/* 启动页叠加层（覆盖在 WebView 上面） - 已移除，现在使用HTML文件 */}
         {activeTab?.isStartPage && false ? (
           <View style={styles.startSurfaceOverlay}>
             <StartSurface
@@ -1604,8 +1172,6 @@ export default function SimpleBrowser() {
           </View>
         ) : null}
         
-        {/* 加载指示器（转圈动画 + 文字） */}
-        {/* 条件渲染：isLoading 为 true 且不在启动页时显示 */}
         {isLoading && !activeTab?.isStartPage ? (
           <View style={styles.loaderOverlay}>
             <ActivityIndicator color="#4f46e5" />
@@ -1613,7 +1179,6 @@ export default function SimpleBrowser() {
           </View>
         ) : null}
         
-        {/* 下拉刷新提示 */}
         {pullDownDistance > 0 && !activeTab?.isStartPage ? (
           <Animated.View 
             style={[
@@ -1640,27 +1205,23 @@ export default function SimpleBrowser() {
         ) : null}
       </Animated.View>
 
-      {/* 底部工具栏（地址栏 + 按钮），原生可用时使用 LiquidGlassView，否则回落到 BlurView */}
       {renderBottomDock()}
 
-      {/* 标签页切换器（条件渲染） */}
-      {/* 只有 isSwitcherVisible 为 true 时才渲染 */}
       {isSwitcherVisible ? (
         <TabSwitcher
-          tabs={tabs}                          // 所有标签页
-          activeTabId={activeTabId}            // 当前激活标签页 ID
-          onSelect={handleSelectTab}           // 选择标签页回调
-          onCloseTab={handleCloseTab}          // 关闭标签页回调
-          onAddTab={handleNewTab}              // 新建标签页回调
+          tabs={tabs}
+          activeTabId={activeTabId}
+          onSelect={handleSelectTab}
+          onCloseTab={handleCloseTab}
+          onAddTab={handleNewTab}
           onDismiss={() => {
             setSwitcherVisible(false);
             setShouldDismissSwitcher(false);
-          }}  // 关闭切换器回调
-          shouldDismiss={shouldDismissSwitcher}  // 触发关闭动画
+          }}
+          shouldDismiss={shouldDismissSwitcher}
         />
       ) : null}
 
-      {/* 收藏夹面板（条件渲染） */}
       {isBookmarksPanelVisible ? (
         <BookmarksPanel
           bookmarks={bookmarks}
@@ -1674,7 +1235,6 @@ export default function SimpleBrowser() {
         />
       ) : null}
       
-      {/* 设置面板（条件渲染） */}
       {isSettingsPanelVisible ? (
         <SettingsPanel
           apiKey={apiKey}
@@ -1691,7 +1251,6 @@ export default function SimpleBrowser() {
         />
       ) : null}
       
-      {/* 总结抽屉（条件渲染） */}
       <SummaryDrawer
         visible={summaryDrawerVisible}
         content={summaryContent}
@@ -1710,2220 +1269,3 @@ export default function SimpleBrowser() {
     </View>
   );
 }
-
-// ==================== 工具栏按钮组件 ====================
-type ToolbarButtonProps = {
-  icon: keyof typeof Ionicons.glyphMap;  // 图标名称（必须是 Ionicons 支持的图标名）
-  accessibilityLabel: string;            // 无障碍标签（屏幕阅读器会读取）
-  disabled?: boolean;                    // 是否禁用（可选，默认 false）
-  onPress: () => void;                   // 点击回调函数
-  onLongPress?: () => void;              // 长按回调函数（可选）
-};
-
-/**
- * 工具栏按钮组件
- * 用于底部工具栏的前进、后退、刷新等按钮
- */
-function ToolbarButton({ icon, accessibilityLabel, disabled, onPress, onLongPress }: ToolbarButtonProps) {
-  const [scaleAnim] = useState(new Animated.Value(1));
-  const [opacityAnim] = useState(new Animated.Value(1));
-  
-  const handlePress = () => {
-    if (disabled) return;
-    
-    // 执行点击动画
-    Animated.sequence([
-      // 快速缩小到 0.85 并淡出到 0.6
-      Animated.parallel([
-        Animated.timing(scaleAnim, {
-          toValue: 0.85,
-          duration: 100,
-          useNativeDriver: false,
-        }),
-        Animated.timing(opacityAnim, {
-          toValue: 0.6,
-          duration: 100,
-          useNativeDriver: false,
-        }),
-      ]),
-      // 恢复到原始大小和不透明度
-      Animated.parallel([
-        Animated.spring(scaleAnim, {
-          toValue: 1,
-          friction: 8,
-          tension: 100,
-          useNativeDriver: false,
-        }),
-        Animated.timing(opacityAnim, {
-          toValue: 1,
-          duration: 100,
-          useNativeDriver: false,
-        }),
-      ]),
-    ]).start();
-    
-    // 执行回调
-    onPress();
-  };
-  
-  return (
-    <Animated.View
-      style={[
-        {
-          flex: 1,
-          transform: [{ scale: scaleAnim }],
-          opacity: opacityAnim,
-        },
-      ]}
-    >
-      <Pressable
-        onPress={handlePress}                    // 点击事件处理
-        onLongPress={onLongPress}
-        disabled={disabled}                  // 禁用状态
-        accessibilityRole="button"           // 声明为按钮角色（用于无障碍）
-        accessibilityLabel={accessibilityLabel}  // 无障碍标签
-        style={[
-          styles.toolbarButton,              // 基础样式
-          disabled && styles.toolbarButtonDisabled  // 禁用时应用额外样式（条件样式）
-        ]}
-      >
-        {/* 图标：禁用时显示灰色，正常时显示深色 */}
-        <Ionicons 
-          name={icon} 
-          size={20} 
-          color={disabled ? '#94a3b8' : '#11181C'}  // 三元运算符根据状态选择颜色
-        />
-      </Pressable>
-    </Animated.View>
-  );
-}
-
-// ==================== 启动页组件 ====================
-type StartSurfaceProps = {
-  quickLinks: QuickLink[];                              // 快捷链接数组（预设 + 自定义）
-  rssNews: RssNewsItem[];                               // RSS 新闻列表
-  isLoadingRss: boolean;                                // RSS 加载状态
-  onQuickLinkPress: (url: string) => void;              // 点击快捷链接的回调
-  onAddQuickLink: (label: string, url: string) => Promise<void> | void;  // 添加自定义链接的回调（可能是异步）
-  onNewsPress: (url: string) => void;                   // 点击新闻的回调
-};
-
-/**
- * 启动页组件
- * 显示在新标签页或空白页时，包含：
- * - 快捷链接网格
- * - 灵感任务列表
- * - 自定义快捷链接表单
- */
-function StartSurface({ quickLinks, rssNews, isLoadingRss, onQuickLinkPress, onAddQuickLink, onNewsPress }: StartSurfaceProps) {
-  // ==================== 表单状态 ====================
-  const [linkLabel, setLinkLabel] = useState('');   // 新链接名称
-  const [linkUrl, setLinkUrl] = useState('');       // 新链接地址
-  const [feedback, setFeedback] = useState<string | null>(null);  // 反馈提示文字（成功/失败）
-  const [isSavingLink, setIsSavingLink] = useState(false);        // 是否正在保存（防止重复提交）
-  
-  // 获取当前主题
-  const colorScheme = useColorScheme();
-  const isDark = colorScheme === 'dark';
-  
-  // feedbackTimeoutRef: 存储定时器 ID，用于自动清除反馈提示
-  // ReturnType<typeof setTimeout> 获取 setTimeout 的返回类型（Node 中是 NodeJS.Timeout）
-  const feedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // ==================== 清理副作用 ====================
-  /**
-   * useEffect 的返回函数会在组件卸载时执行（清理函数）
-   * 这里清理可能还未触发的定时器，避免内存泄漏
-   */
-  useEffect(() => {
-    return () => {
-      // 组件卸载时，如果还有定时器，清除它
-      if (feedbackTimeoutRef.current) {
-        clearTimeout(feedbackTimeoutRef.current);
-      }
-    };
-  }, []);  // 空依赖数组表示只在挂载/卸载时执行
-
-  // ==================== 事件处理函数 ====================
-  
-  /**
-   * 高阶函数：生成输入框变化处理函数
-   * @param setter - 状态更新函数（setLinkLabel 或 setLinkUrl）
-   * @returns 输入框 onChangeText 回调函数
-   * 
-   * 这是一个函数工厂模式：
-   * handleInputChange(setLinkLabel) 返回一个新函数 (text) => { ... }
-   * 该新函数接收输入文本并更新状态
-   */
-  const handleInputChange = (setter: (text: string) => void) => (text: string) => {
-    setter(text);  // 更新对应的状态
-    
-    // 如果有反馈提示，清除它（用户重新输入时隐藏提示）
-    if (feedback) {
-      setFeedback(null);
-    }
-  };
-
-  /**
-   * 保存新的快捷链接
-   * 异步函数，处理表单提交逻辑
-   */
-  const handleSaveQuickLink = async () => {
-    // 防止重复提交（如果正在保存，直接返回）
-    if (isSavingLink) {
-      return;
-    }
-    
-    setIsSavingLink(true);  // 设置保存中状态
-    
-    try {
-      // 调用父组件传入的保存函数（可能会抛出错误）
-      await onAddQuickLink(linkLabel, linkUrl);
-      
-      // 保存成功，清空输入框
-      setLinkLabel('');
-      setLinkUrl('');
-      
-      // 显示成功反馈
-      setFeedback('已添加到快捷方式');
-      
-      // 清除之前的定时器（如果有）
-      if (feedbackTimeoutRef.current) {
-        clearTimeout(feedbackTimeoutRef.current);
-      }
-      
-      // 设置新定时器：2 秒后自动清除反馈提示
-      feedbackTimeoutRef.current = setTimeout(() => setFeedback(null), 2000);
-    } catch (error) {
-      // 捕获异常（如重名、空输入等验证错误）
-      // instanceof 检查 error 是否是 Error 类的实例
-      // 如果是，获取其 message 属性；否则使用默认提示
-      const message = error instanceof Error ? error.message : '保存失败，请稍后再试';
-      setFeedback(message);  // 显示错误提示
-    } finally {
-      // finally 块无论是否抛出异常都会执行
-      // 重置保存中状态
-      setIsSavingLink(false);
-    }
-  };
-
-  // ==================== 渲染 ====================
-  return (
-    <View style={[styles.startSurface, isDark && styles.startSurfaceDark]}>
-      {/* 页面标题 */}
-      <ThemedText type="title">启动页</ThemedText>
-      
-      {/* 副标题说明 */}
-      <ThemedText style={[styles.startSubtitle, isDark && styles.startSubtitleDark]}>
-        快捷开启研究、收藏灵感或输入地址开始浏览。
-      </ThemedText>
-      
-      {/* 快捷链接网格 */}
-      <View style={styles.quickLinkRow}>
-        {/* array.map() 遍历数组，为每个元素生成一个组件 */}
-        {quickLinks.map((item) => (
-          <Pressable
-            key={item.label}  // key 用于 React 识别列表项（必须唯一）
-            style={[styles.quickLinkChip, isDark && styles.quickLinkChipDark]}
-            onPress={() => onQuickLinkPress(item.url)}  // 箭头函数包装，传递 url 参数
-          >
-            {/* lightColor/darkColor 是 ThemedText 的自定义属性，用于适配亮/暗模式 */}
-            <ThemedText lightColor="#fff" darkColor="#fff" style={styles.quickLinkText}>
-              {item.label}
-            </ThemedText>
-          </Pressable>
-        ))}
-      </View>
-
-      {/* 自定义快捷网址表单卡片 */}
-      <View style={[styles.customLinkCard, isDark && styles.customLinkCardDark]}>
-        <ThemedText type="subtitle">自定义快捷网址</ThemedText>
-        
-        {/* 名称输入框 */}
-        <TextInput
-          value={linkLabel}  // 受控组件：显示的值由状态控制
-          onChangeText={handleInputChange(setLinkLabel)}  // 输入变化时调用
-          placeholder="名称，例如 RSS 或 工具箱"
-          placeholderTextColor={isDark ? '#888' : '#94a3b8'}
-          style={[styles.customInput, isDark && styles.customInputDark]}
-        />
-        
-        {/* 网址输入框 */}
-        <TextInput
-          value={linkUrl}
-          onChangeText={handleInputChange(setLinkUrl)}
-          placeholder="网址，例如 https://example.com"
-          placeholderTextColor={isDark ? '#888' : '#94a3b8'}
-          autoCapitalize="none"  // 禁用自动大写（URL 不需要）
-          autoCorrect={false}    // 禁用自动纠错（避免破坏 URL）
-          style={[styles.customInput, isDark && styles.customInputDark]}
-        />
-        
-        {/* 保存按钮 */}
-        <Pressable
-          onPress={handleSaveQuickLink}
-          disabled={isSavingLink}  // 保存中时禁用按钮
-          style={[
-            styles.customSaveButton,
-            isSavingLink && styles.customSaveButtonDisabled  // 禁用时应用额外样式
-          ]}
-        >
-          <ThemedText lightColor="#fff" darkColor="#000" style={styles.customSaveLabel}>
-            {/* 根据状态动态显示按钮文字 */}
-            {isSavingLink ? '保存中…' : '保存快捷方式'}
-          </ThemedText>
-        </Pressable>
-        
-        {/* 反馈提示（成功/失败消息） */}
-        {/* 三元运算符：如果 feedback 存在则渲染，否则渲染 null（不显示） */}
-        {feedback ? <ThemedText style={styles.customFeedback}>{feedback}</ThemedText> : null}
-      </View>
-
-      {/* RSS 新闻卡片 */}
-      <View style={[styles.ritualCard, isDark && styles.ritualCardDark]}>
-        <ThemedText type="subtitle">📰 今日新闻</ThemedText>
-        {isLoadingRss ? (
-          // 加载中显示提示
-          <View style={styles.ritualRow}>
-            <ActivityIndicator size="small" color="#2563eb" />
-            <ThemedText style={styles.ritualText}>正在加载新闻...</ThemedText>
-          </View>
-        ) : (
-          // 显示新闻列表
-          rssNews.map((item, index) => (
-            <Pressable
-              key={`${item.title}-${index}`}
-              style={styles.ritualRow}
-              onPress={() => item.link && onNewsPress(item.link)}
-              disabled={!item.link}
-            >
-              {/* 新闻图标 */}
-              <Ionicons name="newspaper-outline" size={16} color="#2563eb" />
-              {/* 新闻标题 */}
-              <ThemedText 
-                numberOfLines={1} 
-                style={[styles.ritualText, item.link && { color: '#2563eb' }]}
-              >
-                {item.title}
-              </ThemedText>
-            </Pressable>
-          ))
-        )}
-      </View>
-    </View>
-  );
-}
-
-// ==================== 屏幕尺寸 ====================
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-// 标签页卡片尺寸
-const TAB_CARD_WIDTH = SCREEN_WIDTH * 0.75;
-const TAB_CARD_HEIGHT = SCREEN_HEIGHT * 0.55;
-
-// ==================== 标签页卡片组件 ====================
-type TabCardProps = {
-  tab: BrowserTab;
-  active: boolean;
-  onSelect: () => void;
-  onClose: () => void;
-  isNewTab?: boolean;
-};
-
-/**
- * 标签页卡片组件
- * 显示网页缩略图效果，支持上滑关闭
- */
-function TabCard({ tab, active, onSelect, onClose, isNewTab }: TabCardProps) {
-  const colorScheme = useColorScheme();
-  const isDark = colorScheme === 'dark';
-  
-  // 动画值
-  const translateY = useRef(new Animated.Value(isNewTab ? -SCREEN_HEIGHT : 0)).current;
-  const scale = useRef(new Animated.Value(1)).current;
-  const opacity = useRef(new Animated.Value(isNewTab ? 0 : 1)).current;
-  const isClosing = useRef(false);
-  const isSelecting = useRef(false);
-  
-  // 新标签页飞入动画
-  useEffect(() => {
-    if (isNewTab) {
-      Animated.parallel([
-        Animated.spring(translateY, {
-          toValue: 0,
-          friction: 10,
-          tension: 70,
-          useNativeDriver: true,
-        }),
-        Animated.timing(opacity, {
-          toValue: 1,
-          duration: 300,
-          useNativeDriver: true,
-        }),
-      ]).start();
-    }
-  }, [isNewTab]);
-  
-  // 处理标签页选择 - 触发父组件的展开动画
-  const handleSelectPress = () => {
-    if (isSelecting.current) return;
-    isSelecting.current = true;
-
-    // 直接触发选择，不做任何动画，避免帧率下降
-    onSelect();
-    isSelecting.current = false;
-  };
-  
-  // 手势响应器 - 上滑关闭
-  const panResponder = useMemo(
-    () =>
-      PanResponder.create({
-        // 触摸开始时就准备响应
-        onStartShouldSetPanResponder: () => true,
-        // 只要有向上分量就接管手势（无论水平方向如何移动）
-        onMoveShouldSetPanResponder: (_, { dy }) => dy < -SWIPE_MIN_DRAG,
-        // 在捕获阶段优先拦截，只要有向上滑动就立即捕获，不考虑横向分量
-        onMoveShouldSetPanResponderCapture: (_, { dy }) => {
-          // 优先级策略：只要检测到向上滑动，立即捕获手势，阻止横向滚动
-          return dy < -SWIPE_MIN_DRAG;
-        },
-        onPanResponderGrant: () => {
-          isClosing.current = false;
-        },
-        onPanResponderMove: (_, { dy }) => {
-          // 只要有向上分量就跟随（即使同时在水平移动）
-          // 限制最小值为0，不允许向下拖
-          const clampedDy = Math.min(0, dy);
-          translateY.setValue(clampedDy);
-          
-          // 如果是向上滑动，计算透明度和缩放
-          if (clampedDy < 0) {
-            const progress = Math.min(1, Math.abs(clampedDy) / (SWIPE_CLOSE_DISTANCE * 2));
-            opacity.setValue(1 - progress * 0.5);
-            scale.setValue(1 - progress * 0.1);
-          }
-        },
-        onPanResponderTerminationRequest: () => false,
-        onPanResponderRelease: (_, { dy, vy }) => {
-          const clampedDy = Math.min(0, dy);
-          // 向上滑动超过阈值 或 有向上速度 即可关闭
-          const shouldClose = (clampedDy < -SWIPE_CLOSE_DISTANCE) || (vy < SWIPE_RELEASE_VELOCITY && clampedDy < 0);
-          
-          if (shouldClose && !isClosing.current) {
-            isClosing.current = true;
-            // 关闭动画：向上飞出
-            Animated.parallel([
-              Animated.timing(translateY, {
-                toValue: -SCREEN_HEIGHT,
-                duration: 250,
-                useNativeDriver: true,
-              }),
-              Animated.timing(opacity, {
-                toValue: 0,
-                duration: 200,
-                useNativeDriver: true,
-              }),
-            ]).start(() => onClose());
-          } else {
-            // 弹回原位
-            Animated.parallel([
-              Animated.spring(translateY, {
-                toValue: 0,
-                useNativeDriver: true,
-              }),
-              Animated.spring(opacity, {
-                toValue: 1,
-                useNativeDriver: true,
-              }),
-              Animated.spring(scale, {
-                toValue: 1,
-                useNativeDriver: true,
-              }),
-            ]).start();
-          }
-        },
-      }),
-    [onClose, translateY, opacity, scale],
-  );
-  
-  return (
-    <Animated.View
-      {...panResponder.panHandlers}
-      style={[
-        styles.tabCard,
-        active && styles.tabCardActive,
-        isDark && styles.tabCardDark,
-        {
-          transform: [
-            { translateY },
-            { scale },
-          ],
-          opacity,
-        },
-      ]}
-    >
-      {/* 卡片头部 - 显示标题 */}
-      <View style={[styles.tabCardHeader, isDark && styles.tabCardHeaderDark]}>
-        <View style={styles.tabCardUrlBar}>
-          <Ionicons 
-            name={tab.isStartPage ? 'home' : 'globe-outline'} 
-            size={14} 
-            color={isDark ? '#94a3b8' : '#64748b'} 
-          />
-          <ThemedText numberOfLines={1} style={styles.tabCardUrl}>
-            {tab.isStartPage ? '启动页' : (tab.title || tab.url.replace(/^https?:\/\//, '').split('/')[0])}
-          </ThemedText>
-        </View>
-        <Pressable onPress={onClose} hitSlop={8}>
-          <Ionicons name="close" size={18} color={isDark ? '#94a3b8' : '#64748b'} />
-        </Pressable>
-      </View>
-      
-      {/* 卡片内容 - 网页预览 */}
-      <Pressable style={styles.tabCardContent} onPress={handleSelectPress}>
-        {tab.snapshot ? (
-          <Image 
-            source={{ uri: tab.snapshot }} 
-            style={{ flex: 1, width: '100%', height: '100%', resizeMode: 'cover' }} 
-          />
-        ) : tab.isStartPage ? (
-          // 启动页预览
-          <View style={[styles.tabCardPreview, isDark && styles.tabCardPreviewDark]}>
-            <View style={styles.tabCardIconCircle}>
-              <Ionicons name="home" size={32} color="#3b82f6" />
-            </View>
-            <ThemedText style={styles.tabCardPreviewText}>启动页</ThemedText>
-          </View>
-        ) : (
-          // 网页预览 - 显示网站图标和标题
-          <View style={[styles.tabCardPreview, isDark && styles.tabCardPreviewDark]}>
-            {/* 网站 Favicon */}
-            <View style={[styles.tabCardFavicon, isDark && styles.tabCardFaviconDark]}>
-              <Ionicons name="globe" size={40} color={isDark ? '#60a5fa' : '#3b82f6'} />
-            </View>
-            {/* 网页标题 */}
-            <ThemedText numberOfLines={2} style={styles.tabCardDomain}>
-              {tab.title || tab.url.replace(/^https?:\/\//, '').split('/')[0]}
-            </ThemedText>
-            {/* 网站域名 */}
-            <ThemedText numberOfLines={1} style={styles.tabCardFullUrl}>
-              {tab.url.replace(/^https?:\/\//, '').split('/')[0]}
-            </ThemedText>
-          </View>
-        )}
-      </Pressable>
-    </Animated.View>
-  );
-}
-
-// ==================== 标签页切换器组件 ====================
-type TabSwitcherProps = {
-  tabs: BrowserTab[];
-  activeTabId: string;
-  onSelect: (tabId: string) => void;
-  onCloseTab: (tabId: string, stayInSwitcher?: boolean) => void;
-  onAddTab: (stayInSwitcher?: boolean) => void;
-  onDismiss: () => void;
-  shouldDismiss?: boolean;
-};
-
-/**
- * 标签页切换器组件
- * 全屏浮层，支持左右滑动切换、上滑关闭标签页
- */
-function TabSwitcher({ tabs, activeTabId, onSelect, onCloseTab, onAddTab, onDismiss, shouldDismiss }: TabSwitcherProps) {
-  const colorScheme = useColorScheme();
-  const isDark = colorScheme === 'dark';
-  
-  // 当前显示的标签页索引
-  const activeIndex = tabs.findIndex(t => t.id === activeTabId);
-  const [currentIndex, setCurrentIndex] = useState(activeIndex >= 0 ? activeIndex : 0);
-  
-  // 跟踪最新添加的标签页ID（用于飞入动画）
-  const latestTabIdRef = useRef<string | null>(null);
-  const prevTabsLengthRef = useRef(tabs.length);
-  
-  useEffect(() => {
-    if (tabs.length > prevTabsLengthRef.current) {
-      // 新增了标签页，记录最新的ID
-      latestTabIdRef.current = tabs[tabs.length - 1].id;
-      // 500ms后清除，避免重新渲染时误判
-      setTimeout(() => {
-        latestTabIdRef.current = null;
-      }, 500);
-    }
-    prevTabsLengthRef.current = tabs.length;
-  }, [tabs.length]);
-  
-  // 滚动引用
-  const scrollViewRef = useRef<ScrollView>(null);
-  
-  // 动画值：从底部滑入
-  const animTranslateY = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
-  const animOpacity = useRef(new Animated.Value(0)).current;
-  
-  // 进入动画：从底部滑入
-  useEffect(() => {
-    Animated.parallel([
-      Animated.spring(animTranslateY, {
-        toValue: 0,
-        friction: 12,
-        tension: 90,
-        useNativeDriver: true,
-      }),
-      Animated.timing(animOpacity, {
-        toValue: 1,
-        duration: 250,
-        useNativeDriver: true,
-      }),
-    ]).start();
-  }, []);
-  
-  // 退出动画：向底部滑出
-  const handleDismissWithAnim = (callback?: () => void) => {
-    Animated.parallel([
-      Animated.timing(animTranslateY, {
-        toValue: SCREEN_HEIGHT,
-        duration: 280,
-        easing: Easing.in(Easing.cubic),
-        useNativeDriver: true,
-      }),
-      Animated.timing(animOpacity, {
-        toValue: 0,
-        duration: 280,
-        useNativeDriver: true,
-      }),
-    ]).start(() => {
-      if (callback && typeof callback === 'function') {
-        callback();
-      }
-      onDismiss();
-    });
-  };
-  
-  // 监听外部触发的关闭请求
-  useEffect(() => {
-    if (shouldDismiss) {
-      handleDismissWithAnim();
-    }
-  }, [shouldDismiss]);
-  
-  // 计算单个卡片的滚动宽度
-  const cardScrollWidth = SCREEN_WIDTH * TAB_CARD_SPACING;
-  
-  // 初始滚动到当前标签页
-  useEffect(() => {
-    if (scrollViewRef.current && currentIndex >= 0) {
-      scrollViewRef.current.scrollTo({
-        x: currentIndex * cardScrollWidth,
-        animated: false,
-      });
-    }
-  }, []);
-  
-  // 处理滚动结束
-  const handleScrollEnd = (event: { nativeEvent: { contentOffset: { x: number } } }) => {
-    const offsetX = event.nativeEvent.contentOffset.x;
-    const newIndex = Math.round(offsetX / cardScrollWidth);
-    setCurrentIndex(newIndex);
-  };
-  
-  return (
-    <View style={styles.switcherOverlay}>
-      {/* 背景 */}
-      <Animated.View style={[StyleSheet.absoluteFill, { opacity: animOpacity }]}>
-        <BlurView
-          intensity={80}
-          tint={isDark ? 'dark' : 'light'}
-          style={StyleSheet.absoluteFill}
-        />
-      </Animated.View>
-      
-      <Animated.View style={[
-        StyleSheet.absoluteFill,
-        {
-          transform: [{ translateY: animTranslateY }],
-        },
-      ]}>
-      
-      {/* 头部 */}
-      <View style={styles.switcherHeader}>
-        <Pressable onPress={handleDismissWithAnim} style={styles.switcherDoneButton}>
-          <ThemedText style={styles.switcherDoneText}>完成</ThemedText>
-        </Pressable>
-        
-        <ThemedText style={styles.switcherTitle}>
-          {currentIndex + 1} / {tabs.length}
-        </ThemedText>
-        
-        <Pressable onPress={() => onAddTab(true)} style={styles.switcherAddBtn}>
-          <Ionicons name="add" size={28} color={isDark ? '#fff' : '#007AFF'} />
-        </Pressable>
-      </View>
-      
-      {/* 标签页卡片滚动区域 */}
-      <ScrollView
-        ref={scrollViewRef}
-        horizontal
-        pagingEnabled={false}
-        snapToInterval={SCREEN_WIDTH * TAB_CARD_SPACING}
-        snapToAlignment="center"
-        showsHorizontalScrollIndicator={false}
-        onMomentumScrollEnd={handleScrollEnd}
-        contentContainerStyle={styles.switcherScrollContent}
-        decelerationRate="fast"
-      >
-        {tabs.map((tab, index) => (
-          <View key={tab.id} style={styles.tabCardWrapper}>
-            <TabCard
-              tab={tab}
-              active={tab.id === activeTabId}
-              onSelect={() => handleDismissWithAnim(() => onSelect(tab.id))}
-              onClose={() => onCloseTab(tab.id, true)}
-              isNewTab={tab.id === latestTabIdRef.current}
-            />
-          </View>
-        ))}
-      </ScrollView>
-      
-      {/* 底部操作栏 */}
-      <View style={styles.switcherBottomBar}>
-        {/* 页面指示器 */}
-        <View style={styles.pageIndicator}>
-          {tabs.map((tab, index) => (
-            <View
-              key={tab.id}
-              style={[
-                styles.pageIndicatorDot,
-                index === currentIndex && styles.pageIndicatorDotActive,
-              ]}
-            />
-          ))}
-        </View>
-        
-        {/* 新建标签页按钮 */}
-        <Pressable 
-          style={styles.switcherNewTabButton}
-          onPress={() => onAddTab(false)}
-        >
-          <Ionicons name="add-circle" size={28} color={isDark ? '#fff' : '#007AFF'} />
-          <ThemedText style={[styles.switcherNewTabText, isDark && { color: '#fff' }]}>新建标签页</ThemedText>
-        </Pressable>
-      </View>
-      </Animated.View>
-    </View>
-  );
-}
-
-// ==================== 收藏夹面板组件 ====================
-type BookmarksPanelProps = {
-  bookmarks: BookmarkItem[];
-  isCurrentPageBookmarked: boolean;
-  canAddBookmark: boolean;
-  onAddBookmark: () => void;
-  onOpenBookmark: (url: string) => void;
-  onDeleteBookmark: (id: string) => void;
-  onDismiss: () => void;
-  isDark: boolean;
-};
-
-/**
- * 收藏夹面板组件
- * 显示收藏的网页列表，支持添加、删除和打开收藏
- */
-function BookmarksPanel({
-  bookmarks,
-  isCurrentPageBookmarked,
-  canAddBookmark,
-  onAddBookmark,
-  onOpenBookmark,
-  onDeleteBookmark,
-  onDismiss,
-  isDark,
-}: BookmarksPanelProps) {
-  return (
-    <View style={styles.bookmarksOverlay}>
-      <BlurView
-        intensity={80}
-        tint={isDark ? 'dark' : 'light'}
-        style={StyleSheet.absoluteFill}
-      />
-      
-      {/* 收藏夹面板 */}
-      <View style={[styles.bookmarksPanel, isDark && styles.bookmarksPanelDark]}>
-        {/* 头部 */}
-        <View style={styles.bookmarksHeader}>
-          <Pressable onPress={onDismiss} style={styles.bookmarksDoneButton}>
-            <ThemedText style={styles.bookmarksDoneText}>完成</ThemedText>
-          </Pressable>
-          
-          <ThemedText style={styles.bookmarksTitle}>收藏夹</ThemedText>
-          
-          <Pressable 
-            onPress={onAddBookmark}
-            disabled={!canAddBookmark || isCurrentPageBookmarked}
-            style={[
-              styles.bookmarksAddButton,
-              (!canAddBookmark || isCurrentPageBookmarked) && styles.bookmarksAddButtonDisabled,
-            ]}
-          >
-            <Ionicons 
-              name={isCurrentPageBookmarked ? 'bookmark' : 'bookmark-outline'} 
-              size={24} 
-              color={isCurrentPageBookmarked ? '#fbbf24' : (canAddBookmark ? (isDark ? '#fff' : '#007AFF') : '#94a3b8')} 
-            />
-          </Pressable>
-        </View>
-        
-        {/* 收藏列表 */}
-        <ScrollView style={styles.bookmarksList} showsVerticalScrollIndicator={false}>
-          {bookmarks.length === 0 ? (
-            <View style={styles.bookmarksEmpty}>
-              <Ionicons name="bookmarks-outline" size={48} color="#94a3b8" />
-              <ThemedText style={styles.bookmarksEmptyText}>暂无收藏</ThemedText>
-              <ThemedText style={styles.bookmarksEmptyHint}>
-                浏览网页时点击右上角收藏按钮添加
-              </ThemedText>
-            </View>
-          ) : (
-            bookmarks.map((bookmark) => (
-              <View 
-                key={bookmark.id} 
-                style={[styles.bookmarkItem, isDark && styles.bookmarkItemDark]}
-              >
-                <Pressable 
-                  style={styles.bookmarkContent}
-                  onPress={() => onOpenBookmark(bookmark.url)}
-                >
-                  <Ionicons 
-                    name="globe-outline" 
-                    size={20} 
-                    color={isDark ? '#94a3b8' : '#64748b'} 
-                  />
-                  <View style={styles.bookmarkTextContainer}>
-                    <ThemedText numberOfLines={1} style={styles.bookmarkTitle}>
-                      {bookmark.title}
-                    </ThemedText>
-                    <ThemedText numberOfLines={1} style={styles.bookmarkUrl}>
-                      {bookmark.url.replace(/^https?:\/\//, '')}
-                    </ThemedText>
-                  </View>
-                </Pressable>
-                <Pressable 
-                  style={styles.bookmarkDeleteButton}
-                  onPress={() => onDeleteBookmark(bookmark.id)}
-                >
-                  <Ionicons name="trash-outline" size={18} color="#ef4444" />
-                </Pressable>
-              </View>
-            ))
-          )}
-        </ScrollView>
-      </View>
-    </View>
-  );
-}
-
-// ==================== 总结抽屉组件 ====================
-type SummaryDrawerProps = {
-  visible: boolean;
-  content: string;
-  pageContent: string;
-  apiKey: string;
-  model: string;
-  ragflowApiKey?: string;
-  ragflowBaseUrl?: string;
-  selectedProvider?: 'siliconflow' | 'ragflow';
-  error: string | null;
-  isLoading: boolean;
-  onDismiss: () => void;
-  onShare: () => void;
-  isDark: boolean;
-};
-
-type ChatMessage = {
-  role: 'user' | 'assistant' | 'system';
-  content: string;
-};
-
-/**
- * 总结抽屉组件
- * 从底部滑出显示总结结果，并支持对话
- */
-function SummaryDrawer({
-  visible,
-  content,
-  pageContent,
-  apiKey,
-  model,
-  ragflowApiKey,
-  ragflowBaseUrl,
-  selectedProvider = 'siliconflow',
-  error,
-  isLoading,
-  onDismiss,
-  onShare,
-  isDark,
-}: SummaryDrawerProps) {
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  const [chatInput, setChatInput] = useState('');
-  const [isChatLoading, setIsChatLoading] = useState(false);
-  const scrollViewRef = useRef<ScrollView>(null);
-
-  // 当总结内容变化时重置对话
-  useEffect(() => {
-    if (content) {
-      setChatMessages([]);
-    }
-  }, [content]);
-
-  const handleSend = async () => {
-    if (!chatInput.trim() || isChatLoading) return;
-
-    const userMsg = chatInput.trim();
-    setChatInput('');
-    
-    const newMessages: ChatMessage[] = [
-      ...chatMessages,
-      { role: 'user', content: userMsg }
-    ];
-    setChatMessages(newMessages);
-    setIsChatLoading(true);
-    
-    // 滚动到底部
-    setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
-
-    try {
-      // 构建完整对话历史
-      const fullHistory: ChatMessage[] = [];
-      
-      // 添加上下文系统提示
-      fullHistory.push({
-        role: 'system',
-        content: `你是一个有用的助手。以下是用户正在阅读的网页内容：\n\n${pageContent}\n\n以下是你生成的总结：\n${content}\n\n请基于以上内容回答用户的问题。`
-      });
-      
-      // 添加历史消息
-      fullHistory.push(...newMessages);
-
-      // 调用 API
-      const response = await fetch(`${API_BASE_URL}/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: fullHistory,
-          apiKey,
-          model,
-          provider: selectedProvider,
-          ragflowApiKey,
-          ragflowBaseUrl
-        })
-      });
-
-      const data = await response.json();
-      if (data.success) {
-        setChatMessages(prev => [...prev, { role: 'assistant', content: data.reply }]);
-      } else {
-        Alert.alert('错误', data.error || '获取回复失败');
-      }
-    } catch (e: any) {
-      Alert.alert('错误', e.message);
-    } finally {
-      setIsChatLoading(false);
-      setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
-    }
-  };
-
-  if (!visible) return null;
-  
-  return (
-    <KeyboardAvoidingView 
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.summaryOverlay}
-    >
-      <Pressable style={styles.summaryBackdrop} onPress={onDismiss} />
-      
-      <View style={[styles.summaryDrawer, isDark && styles.summaryDrawerDark, { height: '80%' }]}>
-        {/* 头部 */}
-        <View style={styles.summaryHeader}>
-          <ThemedText style={styles.summaryTitle}>网页总结 & 对话</ThemedText>
-          <View style={styles.summaryHeaderButtons}>
-            {content && !error && (
-              <Pressable onPress={onShare} style={styles.summaryShareButton}>
-                <Ionicons name="share-outline" size={20} color={isDark ? '#fff' : '#000'} />
-              </Pressable>
-            )}
-            <Pressable onPress={onDismiss} style={styles.summaryCloseButton}>
-              <Ionicons name="close" size={24} color={isDark ? '#fff' : '#000'} />
-            </Pressable>
-          </View>
-        </View>
-        
-        {/* 内容 */}
-        <ScrollView 
-          ref={scrollViewRef}
-          style={styles.summaryContentScroll} 
-          contentContainerStyle={{ paddingBottom: 20 }}
-          showsVerticalScrollIndicator={true}
-        >
-          {isLoading ? (
-            <View style={styles.summaryLoading}>
-              <ActivityIndicator size="large" color="#4f46e5" />
-              <ThemedText style={styles.summaryLoadingText}>正在总结...</ThemedText>
-            </View>
-          ) : error ? (
-            <View style={styles.summaryError}>
-              <Ionicons name="alert-circle" size={48} color="#ef4444" />
-              <ThemedText style={styles.summaryErrorText}>{error}</ThemedText>
-            </View>
-          ) : (
-            <>
-              <ThemedText style={styles.summaryText}>{content}</ThemedText>
-              
-              {/* 分割线 */}
-              <View style={{ height: 1, backgroundColor: isDark ? '#333' : '#eee', marginVertical: 20 }} />
-              <ThemedText style={{ fontSize: 14, fontWeight: '600', color: '#64748b', marginBottom: 10 }}>
-                基于内容的对话
-              </ThemedText>
-
-              {/* 对话消息 */}
-              {chatMessages.map((msg, index) => (
-                <View key={index} style={{ 
-                  alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
-                  backgroundColor: msg.role === 'user' ? '#4f46e5' : (isDark ? '#2c2c2e' : '#f1f5f9'),
-                  padding: 10,
-                  borderRadius: 12,
-                  marginBottom: 8,
-                  maxWidth: '85%'
-                }}>
-                  <ThemedText style={{ color: msg.role === 'user' ? '#fff' : (isDark ? '#fff' : '#000') }}>
-                    {msg.content}
-                  </ThemedText>
-                </View>
-              ))}
-              
-              {isChatLoading && (
-                <View style={{ alignSelf: 'flex-start', padding: 10 }}>
-                  <ActivityIndicator size="small" color="#4f46e5" />
-                </View>
-              )}
-            </>
-          )}
-        </ScrollView>
-
-        {/* 输入框 */}
-        {!isLoading && !error && (
-          <View style={{ 
-            flexDirection: 'row', 
-            padding: 10, 
-            borderTopWidth: 0.5, 
-            borderTopColor: isDark ? '#333' : '#eee',
-            backgroundColor: isDark ? '#1c1c1e' : '#fff',
-            paddingBottom: Platform.OS === 'ios' ? 30 : 10
-          }}>
-            <TextInput
-              style={{ 
-                flex: 1, 
-                backgroundColor: isDark ? '#2c2c2e' : '#f1f5f9',
-                borderRadius: 20,
-                paddingHorizontal: 16,
-                paddingVertical: 8,
-                color: isDark ? '#fff' : '#000',
-                marginRight: 10,
-                maxHeight: 100
-              }}
-              placeholder="针对内容提问..."
-              placeholderTextColor="#94a3b8"
-              value={chatInput}
-              onChangeText={setChatInput}
-              onSubmitEditing={handleSend}
-              returnKeyType="send"
-              multiline
-            />
-            <Pressable 
-              onPress={handleSend}
-              style={{ 
-                justifyContent: 'center', 
-                alignItems: 'center', 
-                width: 40, 
-                height: 40, 
-                backgroundColor: '#4f46e5', 
-                borderRadius: 20 
-              }}
-            >
-              <Ionicons name="arrow-up" size={24} color="#fff" />
-            </Pressable>
-          </View>
-        )}
-      </View>
-    </KeyboardAvoidingView>
-  );
-}
-
-// ==================== 设置面板组件 ====================
-// 硅基流动常用模型列表
-const AVAILABLE_MODELS = [
-  { id: 'Qwen/Qwen2.5-7B-Instruct', name: 'Qwen2.5-7B (推荐)' },
-  { id: 'Qwen/Qwen2.5-14B-Instruct', name: 'Qwen2.5-14B' },
-  { id: 'Qwen/Qwen2.5-32B-Instruct', name: 'Qwen2.5-32B' },
-  { id: 'Qwen/Qwen2.5-72B-Instruct', name: 'Qwen2.5-72B' },
-  { id: 'deepseek-ai/DeepSeek-V2.5', name: 'DeepSeek-V2.5' },
-  { id: 'THUDM/glm-4-9b-chat', name: 'GLM-4-9B' },
-];
-
-type SettingsPanelProps = {
-  apiKey: string;
-  selectedModel: string;
-  ragflowApiKey: string;
-  ragflowBaseUrl: string;
-  selectedProvider: 'siliconflow' | 'ragflow';
-  onSave: (key: string) => void;
-  onSaveRagflow: (key: string, url: string) => void;
-  onModelChange: (model: string) => void;
-  onProviderChange: (provider: 'siliconflow' | 'ragflow') => void;
-  onDismiss: () => void;
-  isDark: boolean;
-};
-
-/**
- * 设置面板组件
- * 用于配置硅基流动 API Key 和模型选择
- */
-function SettingsPanel({
-  apiKey,
-  selectedModel,
-  ragflowApiKey,
-  ragflowBaseUrl,
-  selectedProvider,
-  onSave,
-  onSaveRagflow,
-  onModelChange,
-  onProviderChange,
-  onDismiss,
-  isDark,
-}: SettingsPanelProps) {
-  const [currentView, setCurrentView] = useState<'main' | 'siliconflow' | 'ragflow'>('main');
-  const [inputValue, setInputValue] = useState(apiKey);
-  const [ragKeyInput, setRagKeyInput] = useState(ragflowApiKey);
-  const [ragUrlInput, setRagUrlInput] = useState(ragflowBaseUrl);
-  
-  const handleSaveSiliconFlow = () => {
-    if (!inputValue.trim()) {
-      Alert.alert('提示', '请输入 API Key');
-      return;
-    }
-    onSave(inputValue.trim());
-  };
-
-  const handleSaveRagflow = () => {
-    if (!ragKeyInput.trim() || !ragUrlInput.trim()) {
-      Alert.alert('提示', '请输入 API Key 和 Base URL');
-      return;
-    }
-    onSaveRagflow(ragKeyInput.trim(), ragUrlInput.trim());
-  };
-
-  const renderMainView = () => (
-    <ScrollView 
-      style={{ flex: 1 }}
-      contentContainerStyle={styles.settingsContent} 
-      showsVerticalScrollIndicator={false}
-    >
-      <ThemedText style={styles.settingSectionTitle}>AI 服务提供商</ThemedText>
-      
-      <Pressable
-        style={[
-          styles.providerCard, 
-          isDark && styles.providerCardDark,
-          selectedProvider === 'siliconflow' && { borderColor: '#4f46e5', borderWidth: 1 }
-        ]}
-        onPress={() => {
-          onProviderChange('siliconflow');
-          setCurrentView('siliconflow');
-        }}
-      >
-        <View style={styles.providerIconContainer}>
-          <Ionicons name="hardware-chip-outline" size={24} color="#4f46e5" />
-        </View>
-        <View style={styles.providerInfo}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <ThemedText style={styles.providerName}>硅基流动 (SiliconFlow)</ThemedText>
-            {selectedProvider === 'siliconflow' && (
-              <View style={{ backgroundColor: '#4f46e5', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-                <ThemedText style={{ color: '#fff', fontSize: 10, fontWeight: 'bold' }}>当前使用</ThemedText>
-              </View>
-            )}
-          </View>
-          <ThemedText style={styles.providerDesc}>提供 Qwen, Yi, DeepSeek 等高性能模型</ThemedText>
-        </View>
-        <Ionicons name="chevron-forward" size={20} color={isDark ? '#64748b' : '#94a3b8'} />
-      </Pressable>
-
-      <Pressable
-        style={[
-          styles.providerCard, 
-          isDark && styles.providerCardDark,
-          selectedProvider === 'ragflow' && { borderColor: '#4f46e5', borderWidth: 1 }
-        ]}
-        onPress={() => {
-          onProviderChange('ragflow');
-          setCurrentView('ragflow');
-        }}
-      >
-        <View style={[styles.providerIconContainer, { backgroundColor: '#ecfdf5' }]}>
-          <Ionicons name="file-tray-full-outline" size={24} color="#10b981" />
-        </View>
-        <View style={styles.providerInfo}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <ThemedText style={styles.providerName}>RAGFlow</ThemedText>
-            {selectedProvider === 'ragflow' && (
-              <View style={{ backgroundColor: '#10b981', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-                <ThemedText style={{ color: '#fff', fontSize: 10, fontWeight: 'bold' }}>当前使用</ThemedText>
-              </View>
-            )}
-          </View>
-          <ThemedText style={styles.providerDesc}>基于 RAG 的知识库问答引擎</ThemedText>
-        </View>
-        <Ionicons name="chevron-forward" size={20} color={isDark ? '#64748b' : '#94a3b8'} />
-      </Pressable>
-    </ScrollView>
-  );
-
-  const renderRagflowView = () => (
-    <ScrollView 
-      style={{ flex: 1 }}
-      contentContainerStyle={[styles.settingsContent, { paddingBottom: 100 }]} 
-      showsVerticalScrollIndicator={false}
-      keyboardDismissMode="on-drag"
-    >
-      <View style={styles.settingItem}>
-        <ThemedText style={styles.settingLabel}>RAGFlow Base URL</ThemedText>
-        <TextInput
-          style={[
-            styles.settingInput,
-            isDark && styles.settingInputDark,
-          ]}
-          value={ragUrlInput}
-          onChangeText={setRagUrlInput}
-          placeholder="例如: https://demo.ragflow.io"
-          placeholderTextColor={isDark ? '#64748b' : '#94a3b8'}
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
-        <ThemedText style={styles.settingHint}>
-          RAGFlow 服务的访问地址
-        </ThemedText>
-      </View>
-
-      <View style={styles.settingItem}>
-        <ThemedText style={styles.settingLabel}>RAGFlow API Key</ThemedText>
-        <TextInput
-          style={[
-            styles.settingInput,
-            isDark && styles.settingInputDark,
-          ]}
-          value={ragKeyInput}
-          onChangeText={setRagKeyInput}
-          placeholder="请输入 API Key"
-          placeholderTextColor={isDark ? '#64748b' : '#94a3b8'}
-          autoCapitalize="none"
-          autoCorrect={false}
-          secureTextEntry={false}
-        />
-        <ThemedText style={styles.settingHint}>
-          在 RAGFlow 控制台获取 API Key
-        </ThemedText>
-      </View>
-    </ScrollView>
-  );
-
-  const renderSiliconFlowView = () => (
-    <ScrollView 
-      style={{ flex: 1 }}
-      contentContainerStyle={[styles.settingsContent, { paddingBottom: 100 }]} 
-      showsVerticalScrollIndicator={false}
-      keyboardDismissMode="on-drag"
-    >
-      <View style={styles.settingItem}>
-        <ThemedText style={styles.settingLabel}>硅基流动 API Key</ThemedText>
-        <TextInput
-          style={[
-            styles.settingInput,
-            isDark && styles.settingInputDark,
-          ]}
-          value={inputValue}
-          onChangeText={setInputValue}
-          placeholder="请输入 API Key (sk-...)"
-          placeholderTextColor={isDark ? '#64748b' : '#94a3b8'}
-          autoCapitalize="none"
-          autoCorrect={false}
-          secureTextEntry={false}
-        />
-        <ThemedText style={styles.settingHint}>
-          在硅基流动官网获取 API Key 后填入此处
-        </ThemedText>
-      </View>
-      
-      <View style={styles.settingItem}>
-        <ThemedText style={styles.settingLabel}>AI 模型</ThemedText>
-        {AVAILABLE_MODELS.map((model) => (
-          <Pressable
-            key={model.id}
-            style={[
-              styles.modelOption,
-              isDark && styles.modelOptionDark,
-              selectedModel === model.id && styles.modelOptionSelected,
-            ]}
-            onPress={() => onModelChange(model.id)}
-          >
-            <View style={styles.modelOptionContent}>
-              <ThemedText style={styles.modelOptionText}>{model.name}</ThemedText>
-              {selectedModel === model.id && (
-                <Ionicons name="checkmark-circle" size={20} color="#4f46e5" />
-              )}
-            </View>
-          </Pressable>
-        ))}
-        <ThemedText style={styles.settingHint}>
-          不同模型的性能和响应速度不同
-        </ThemedText>
-        
-        <View style={{ marginTop: 12 }}>
-          <ThemedText style={styles.settingLabel}>手动输入模型 ID</ThemedText>
-          <TextInput
-            style={[
-              styles.settingInput,
-              isDark && styles.settingInputDark,
-            ]}
-            value={selectedModel}
-            onChangeText={onModelChange}
-            placeholder="例如: 01-ai/Yi-1.5-9B-Chat"
-            placeholderTextColor={isDark ? '#64748b' : '#94a3b8'}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          <ThemedText style={styles.settingHint}>
-            可在此处输入未列出的模型 ID
-          </ThemedText>
-        </View>
-      </View>
-    </ScrollView>
-  );
-  
-  return (
-    <View style={styles.bookmarksOverlay}>
-      <BlurView
-        intensity={80}
-        tint={isDark ? 'dark' : 'light'}
-        style={StyleSheet.absoluteFill}
-      />
-      
-      <KeyboardAvoidingView 
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={{ flex: 1 }}
-      >
-        {/* 设置面板 */}
-        <View style={[styles.bookmarksPanel, isDark && styles.bookmarksPanelDark]}>
-          {/* 头部 */}
-          <View style={styles.bookmarksHeader}>
-            {currentView === 'main' ? (
-              <Pressable onPress={onDismiss} style={styles.bookmarksDoneButton}>
-                <ThemedText style={styles.bookmarksDoneText}>完成</ThemedText>
-              </Pressable>
-            ) : (
-              <Pressable onPress={() => setCurrentView('main')} style={styles.bookmarksDoneButton}>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <Ionicons name="chevron-back" size={24} color="#007AFF" />
-                  <ThemedText style={styles.bookmarksDoneText}>返回</ThemedText>
-                </View>
-              </Pressable>
-            )}
-            
-            <ThemedText style={styles.bookmarksTitle}>
-              {currentView === 'main' ? '设置' : (currentView === 'siliconflow' ? '硅基流动' : 'RAGFlow')}
-            </ThemedText>
-            
-            {currentView === 'siliconflow' ? (
-              <Pressable onPress={handleSaveSiliconFlow} style={styles.bookmarksDoneButton}>
-                <ThemedText style={[styles.bookmarksDoneText, { color: '#007AFF' }]}>保存</ThemedText>
-              </Pressable>
-            ) : currentView === 'ragflow' ? (
-              <Pressable onPress={handleSaveRagflow} style={styles.bookmarksDoneButton}>
-                <ThemedText style={[styles.bookmarksDoneText, { color: '#007AFF' }]}>保存</ThemedText>
-              </Pressable>
-            ) : (
-              <View style={styles.bookmarksDoneButton} />
-            )}
-          </View>
-          
-          {/* 内容区域 */}
-          {currentView === 'main' ? renderMainView() : (currentView === 'siliconflow' ? renderSiliconFlowView() : renderRagflowView())}
-        </View>
-      </KeyboardAvoidingView>
-    </View>
-  );
-}
-
-// ==================== 样式定义 ====================
-/**
- * StyleSheet.create() 创建样式表对象
- * 
- * React Native 样式语法说明：
- * - flex: 弹性布局，数字表示占据的比例（flex: 1 表示占满可用空间）
- * - flexDirection: 主轴方向（'row' 水平，'column' 垂直，默认 'column'）
- * - gap: 子元素间距（仅较新版本支持）
- * - padding: 内边距（paddingHorizontal 水平，paddingVertical 垂直）
- * - margin: 外边距
- * - borderRadius: 圆角半径
- * - position: 定位方式（'absolute' 绝对定位，'relative' 相对定位）
- * - overflow: 溢出处理（'hidden' 隐藏溢出内容）
- */
-const styles = StyleSheet.create({
-  // 全屏容器（占满整个屏幕，包括状态栏区域）
-  fullScreen: {
-    flex: 1,
-    backgroundColor: '#000',      // 黑色背景，深色模式友好
-  },
-  
-  // SafeAreaView 容器样式（保留用于其他地方）
-  safeArea: {
-    flex: 1,
-    backgroundColor: '#f8fafc',
-  },
-  
-  // 主容器样式
-  container: {
-    flex: 1,
-    paddingHorizontal: 12,
-    paddingTop: 4,
-    paddingBottom: 0,
-    gap: 8,
-  },
-  // WebView 包裹容器
-  webViewWrapper: {
-    flex: 1,
-    position: 'relative',
-    overflow: 'hidden',
-  },
-  // WebView 样式
-  webView: {
-    flex: 1,
-    backgroundColor: 'transparent',
-  },
-  // 启动页叠加层（覆盖在 WebView 上面）
-  startSurfaceOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: 10,
-  },
-  // 底部导航栏动画包裹容器
-  bottomDockWrapper: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    zIndex: 5,
-  },
-  startSurface: {
-    flex: 1,
-    padding: 24,
-    paddingTop: 60,               // 顶部安全区域 padding
-    gap: 16,
-    justifyContent: 'flex-start',
-    backgroundColor: '#f8fafc',   // 启动页使用浅色背景
-  },
-  // 启动页深色模式
-  startSurfaceDark: {
-    backgroundColor: '#1c1c1e',
-  },
-  startSubtitle: {
-    fontSize: 14,
-    color: '#475569',
-  },
-  // 副标题深色模式
-  startSubtitleDark: {
-    color: '#a1a1aa',
-  },
-  quickLinkRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  quickLinkChip: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: '#2563eb',
-  },
-  // 快捷链接按钮深色模式
-  quickLinkChipDark: {
-    backgroundColor: '#3b82f6',
-  },
-  quickLinkText: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  customLinkCard: {
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    padding: 16,
-    gap: 10,
-    backgroundColor: '#fff',
-  },
-  // 自定义链接卡片深色模式
-  customLinkCardDark: {
-    backgroundColor: '#2c2c2e',
-    borderColor: '#3a3a3c',
-  },
-  customHelper: {
-    fontSize: 12,
-    color: '#64748b',
-  },
-  customInput: {
-    borderWidth: 1,
-    borderColor: '#d4dbe8',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    fontSize: 14,
-    backgroundColor: '#f8fafc',
-    color: '#0f172a',
-  },
-  // 输入框深色模式
-  customInputDark: {
-    backgroundColor: '#1c1c1e',
-    borderColor: '#3a3a3c',
-    color: '#fff',
-  },
-  customSaveButton: {
-    paddingVertical: 10,
-    borderRadius: 10,
-    alignItems: 'center',
-    backgroundColor: '#2563eb',
-  },
-  customSaveButtonDisabled: {
-    opacity: 0.6,
-  },
-  customSaveLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  customFeedback: {
-    fontSize: 12,
-    color: '#0f172a',
-  },
-  ritualCard: {
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    padding: 16,
-    gap: 8,
-    backgroundColor: '#fff',
-  },
-  // 加载指示器浮层
-  loaderOverlay: {
-    // ...StyleSheet.absoluteFillObject 是对象展开运算符，等价于：
-    // position: 'absolute', left: 0, right: 0, top: 0, bottom: 0
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.05)',  // 半透明黑色背景
-    justifyContent: 'center',             // 垂直居中
-    alignItems: 'center',                 // 水平居中
-    gap: 8,
-  },
-  loaderText: {
-    fontSize: 14,
-    color: '#475569',
-  },
-  pullDownHint: {
-    position: 'absolute',
-    top: 80,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    zIndex: 10,
-  },
-  pullDownText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#475569',
-  },
-  bottomDock: {
-    gap: 12,
-    paddingBottom: 34,
-    paddingTop: 12,
-    paddingHorizontal: 12,
-    overflow: 'hidden',
-  },
-  toolbar: {
-    flexDirection: 'row',
-    justifyContent: 'flex-start',
-    paddingHorizontal: 4,
-  },
-  toolbarButton: {
-    flex: 1,
-    marginHorizontal: 4,
-    paddingVertical: 10,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.5)',
-    alignItems: 'center',
-  },
-  toolbarButtonDisabled: {
-    opacity: 0.4,
-  },
-  addressRow: {
-    flexDirection: 'row',
-    gap: 8,
-    alignItems: 'center',
-  },
-  input: {
-    flex: 6,
-    borderWidth: 0.5,
-    borderColor: 'rgba(0, 0, 0, 0.1)',
-    borderRadius: 30,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    fontSize: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.6)',
-  },
-  // 标签页切换器浮层（全屏遮罩）
-  switcherOverlay: {
-    ...StyleSheet.absoluteFillObject,           // 绝对定位，占满整个屏幕
-    justifyContent: 'flex-end',                 // 内容靠底部对齐（面板从底部弹出）
-    backgroundColor: 'rgba(15, 23, 42, 0.35)',  // 半透明深色背景（遮罩层）
-  },
-  switcherPanel: {
-    backgroundColor: '#fff',
-    padding: 16,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    gap: 12,
-  },
-  switcherHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingTop: 60, // 避开状态栏和刘海屏
-    paddingHorizontal: 20,
-    paddingBottom: 16,
-  },
-  switcherAddButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: '#e0f2ff',
-  },
-  switcherAddLabel: {
-    color: '#2563eb',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  switcherList: {
-    gap: 10,
-  },
-  // ==================== 滑动手势相关样式 ====================
-  
-  // 滑动轨道容器（包含红色背景 + 卡片）
-  swipeTrack: {
-    position: 'relative',  // 相对定位，作为子元素绝对定位的参照
-    overflow: 'hidden',    // 隐藏溢出内容（裁剪圆角外的内容）
-    borderRadius: 16,      // 圆角
-  },
-  
-  // 左侧红色删除区域（向右滑动时显示）
-  swipeActionLeft: {
-    position: 'absolute',       // 绝对定位
-    left: 0,                    // 贴左边
-    top: 0,
-    bottom: 0,                  // 上下撑满
-    width: 120,                 // 固定宽度 120px
-    backgroundColor: '#ef4444', // 红色背景
-    justifyContent: 'center',   // 内容垂直居中
-    alignItems: 'center',       // 内容水平居中
-    gap: 4,                     // 子元素间距（图标和文字）
-  },
-  
-  // 右侧红色删除区域（向左滑动时显示）
-  swipeActionRight: {
-    position: 'absolute',
-    right: 0,                   // 贴右边
-    top: 0,
-    bottom: 0,
-    width: 120,                 // 固定宽度 120px
-    backgroundColor: '#ef4444', // 红色背景
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 4,
-  },
-  
-  // 滑动提示文字样式（"关闭" / "松手关闭"）
-  swipeActionLabel: {
-    fontSize: 13,
-    color: '#fff',         // 白色文字
-    fontWeight: '500',     // 中等粗细
-  },
-  // 标签页卡片样式（可滑动的主体）
-  switcherCard: {
-    flexDirection: 'row',       // 水平布局（图标在左，内容在中，关闭按钮在右）
-    alignItems: 'center',       // 垂直居中对齐
-    padding: 12,                // 内边距
-    borderRadius: 16,           // 圆角
-    borderWidth: 1,             // 边框宽度
-    borderColor: '#e2e8f0',     // 灰色边框
-    backgroundColor: '#fff',    // 白色背景
-  },
-  
-  // 激活状态的卡片样式（蓝色边框）
-  switcherCardActive: {
-    borderColor: '#2563eb',     // 蓝色边框，表示当前激活
-  },
-  switcherCardBody: {
-    flex: 1,
-    gap: 4,
-  },
-  switcherCardTitle: {
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  switcherCardSubtitle: {
-    fontSize: 12,
-    color: '#475569',
-  },
-  switcherCloseButton: {
-    marginLeft: 12,
-    padding: 6,
-  },
-  
-  // ==================== 新版标签页切换器样式 ====================
-  
-  // 切换器头部栏
-  switcherHeaderBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 60,
-    paddingBottom: 16,
-  },
-  switcherDoneButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  switcherDoneText: {
-    fontSize: 17,
-    color: '#007AFF',
-    fontWeight: '600',
-  },
-  switcherTitle: {
-    fontSize: 17,
-    fontWeight: '600',
-  },
-  switcherAddBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  
-  // 标签页卡片滚动内容
-  // 添加水平内边距使第一个和最后一个卡片居中显示
-  switcherScrollContent: {
-    alignItems: 'center',
-    paddingVertical: 20,
-    paddingHorizontal: (SCREEN_WIDTH - SCREEN_WIDTH * TAB_CARD_SPACING) / 2,
-  },
-  
-  // 单个标签页卡片包裹器
-  // 调整 TAB_CARD_SPACING 常量来控制卡片间距
-  tabCardWrapper: {
-    width: SCREEN_WIDTH * TAB_CARD_SPACING,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  
-  // 标签页卡片主体样式
-  tabCard: {
-    width: TAB_CARD_WIDTH,
-    height: TAB_CARD_HEIGHT,
-    borderRadius: 16,
-    backgroundColor: '#fff',
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.15,
-    shadowRadius: 16,
-    elevation: 8,
-    borderWidth: 3,
-    borderColor: 'transparent',
-  },
-  
-  // 激活状态的标签页卡片
-  tabCardActive: {
-    borderColor: '#007AFF',
-  },
-  
-  // 深色模式标签页卡片
-  tabCardDark: {
-    backgroundColor: '#1c1c1e',
-  },
-  
-  // 标签页卡片头部（网址栏）
-  tabCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    backgroundColor: '#f8fafc',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0',
-  },
-  
-  // 深色模式卡片头部
-  tabCardHeaderDark: {
-    backgroundColor: '#2c2c2e',
-    borderBottomColor: '#3a3a3c',
-  },
-  
-  // 网址栏容器
-  tabCardUrlBar: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginRight: 12,
-  },
-  
-  // 网址文本
-  tabCardUrl: {
-    flex: 1,
-    fontSize: 13,
-    color: '#64748b',
-  },
-  
-  // 标签页卡片容器（包含阴影）
-  tabCardContainer: {
-    width: TAB_CARD_WIDTH,
-    height: TAB_CARD_HEIGHT,
-    borderRadius: 16,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.15,
-    shadowRadius: 16,
-    elevation: 8,
-  },
-  
-  // 标签页卡片内容（可点击区域）
-  tabCardContent: {
-    flex: 1,
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    borderWidth: 2,
-    borderColor: 'transparent',
-    overflow: 'hidden',
-  },
-  
-  // 激活状态的卡片边框
-  tabCardContentActive: {
-    borderColor: '#007AFF',
-  },
-  
-  // 深色模式卡片背景
-  tabCardContentDark: {
-    backgroundColor: '#1c1c1e',
-  },
-  
-  // 卡片预览区域（显示图标和域名）
-  tabCardPreview: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#f8fafc',
-    gap: 16,
-    padding: 20,
-  },
-  tabCardPreviewDark: {
-    backgroundColor: '#2c2c2e',
-  },
-  tabCardPreviewText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#334155',
-    textAlign: 'center',
-  },
-  // 启动页图标圆圈
-  tabCardIconCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: '#eff6ff',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  // 网站 Favicon 容器
-  tabCardFavicon: {
-    width: 80,
-    height: 80,
-    borderRadius: 20,
-    backgroundColor: '#f1f5f9',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  tabCardFaviconDark: {
-    backgroundColor: '#374151',
-  },
-  // 网站域名
-  tabCardDomain: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#1e293b',
-  },
-  // 完整网址
-  tabCardFullUrl: {
-    fontSize: 13,
-    color: '#94a3b8',
-    textAlign: 'center',
-    marginTop: 4,
-  },
-  
-  // 卡片关闭按钮
-  tabCardCloseButton: {
-    position: 'absolute',
-    top: 12,
-    right: 12,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  
-  // 上滑提示
-  swipeHint: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    marginTop: 16,
-  },
-  swipeHintText: {
-    fontSize: 13,
-    color: '#94a3b8',
-  },
-  
-  // 页面指示器
-  pageIndicator: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 8,
-  },
-  pageIndicatorDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: 'rgba(255,255,255,0.3)',
-  },
-  pageIndicatorDotActive: {
-    backgroundColor: '#fff',
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-  },
-  
-  // ==================== 标签页切换器底部操作栏 ====================
-  switcherBottomBar: {
-    alignItems: 'center',
-    paddingVertical: 16,
-    paddingBottom: 40,
-    gap: 16,
-  },
-  switcherNewTabButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    borderRadius: 24,
-  },
-  switcherNewTabText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#007AFF',
-  },
-  
-  // ==================== 收藏夹面板样式 ====================
-  bookmarksOverlay: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  bookmarksPanel: {
-    flex: 1,
-    backgroundColor: '#fff',
-    paddingTop: 60,
-    paddingBottom: 34,
-  },
-  bookmarksPanelDark: {
-    backgroundColor: '#1c1c1e',
-  },
-  bookmarksHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 16,
-    borderBottomWidth: 0.5,
-    borderBottomColor: 'rgba(0, 0, 0, 0.1)',
-  },
-  bookmarksDoneButton: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  bookmarksDoneText: {
-    fontSize: 17,
-    color: '#007AFF',
-    fontWeight: '600',
-  },
-  bookmarksTitle: {
-    fontSize: 17,
-    fontWeight: '600',
-  },
-  bookmarksAddButton: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  bookmarksAddButtonDisabled: {
-    opacity: 0.5,
-  },
-  bookmarksList: {
-    paddingHorizontal: 16,
-    paddingTop: 12,
-  },
-  bookmarksEmpty: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 60,
-    gap: 12,
-  },
-  bookmarksEmptyText: {
-    fontSize: 17,
-    fontWeight: '600',
-    color: '#64748b',
-  },
-  bookmarksEmptyHint: {
-    fontSize: 14,
-    color: '#94a3b8',
-    textAlign: 'center',
-  },
-  bookmarkItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    marginBottom: 8,
-    backgroundColor: '#f8fafc',
-    borderRadius: 12,
-  },
-  bookmarkItemDark: {
-    backgroundColor: '#2c2c2e',
-  },
-  bookmarkContent: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  bookmarkTextContainer: {
-    flex: 1,
-    gap: 2,
-  },
-  bookmarkTitle: {
-    fontSize: 15,
-    fontWeight: '500',
-  },
-  bookmarkUrl: {
-    fontSize: 12,
-    color: '#64748b',
-  },
-  bookmarkDeleteButton: {
-    padding: 8,
-    marginLeft: 8,
-  },
-  // ==================== 设置面板样式 ====================
-  settingsContent: {
-    padding: 20,
-    gap: 20,
-  },
-  settingSectionTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#64748b',
-    marginBottom: 8,
-    marginLeft: 4,
-    textTransform: 'uppercase',
-  },
-  providerCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#f8fafc',
-    padding: 16,
-    borderRadius: 16,
-    gap: 12,
-  },
-  providerCardDark: {
-    backgroundColor: '#2c2c2e',
-  },
-  providerIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#eef2ff',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  providerInfo: {
-    flex: 1,
-    gap: 4,
-  },
-  providerName: {
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  providerDesc: {
-    fontSize: 12,
-    color: '#64748b',
-  },
-  settingItem: {
-    gap: 12,
-  },
-  settingLabel: {
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  settingInput: {
-    backgroundColor: '#f1f5f9',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    fontSize: 15,
-    color: '#000',
-  },
-  settingInputDark: {
-    backgroundColor: '#1e293b',
-    color: '#fff',
-  },
-  settingHint: {
-    fontSize: 13,
-    color: '#64748b',
-  },
-  modelOption: {
-    backgroundColor: '#f8fafc',
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    marginBottom: 8,
-  },
-  modelOptionDark: {
-    backgroundColor: '#2c2c2e',
-  },
-  modelOptionSelected: {
-    backgroundColor: '#eef2ff',
-    borderWidth: 1,
-    borderColor: '#4f46e5',
-  },
-  modelOptionContent: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  modelOptionText: {
-    fontSize: 15,
-    fontWeight: '500',
-  },
-  // ==================== 总结抽屉样式 ====================
-  summaryOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: 'flex-end',
-    zIndex: 1000,
-  },
-  summaryBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-  },
-  summaryDrawer: {
-    height: '50%',
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingTop: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
-    elevation: 10,
-  },
-  summaryDrawerDark: {
-    backgroundColor: '#1c1c1e',
-  },
-  summaryHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingBottom: 16,
-    borderBottomWidth: 0.5,
-    borderBottomColor: 'rgba(0, 0, 0, 0.1)',
-  },
-  summaryTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  summaryHeaderButtons: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  summaryShareButton: {
-    padding: 4,
-  },
-  summaryCloseButton: {
-    padding: 4,
-  },
-  summaryContentScroll: {
-    flex: 1,
-    paddingHorizontal: 20,
-    paddingTop: 20,
-  },
-  summaryLoading: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 12,
-    paddingVertical: 60,
-  },
-  summaryLoadingText: {
-    fontSize: 15,
-    color: '#64748b',
-  },
-  summaryError: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 16,
-    paddingVertical: 60,
-  },
-  summaryErrorText: {
-    fontSize: 15,
-    color: '#ef4444',
-    textAlign: 'center',
-  },
-  summaryText: {
-    fontSize: 16,
-    lineHeight: 24,
-    paddingBottom: 40,
-  },
-});
