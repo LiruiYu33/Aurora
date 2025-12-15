@@ -23,7 +23,7 @@ import type { WebViewNavigation } from 'react-native-webview/lib/WebViewTypes';
 
 import { ThemedText } from '@/components/themed-text';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { summarisePage } from '@/services/SummariseService';
+import { summarisePage, setBackendUrl as setServiceBackendUrl } from '@/services/SummariseService';
 
 // 导入组件
 import {
@@ -43,6 +43,7 @@ import {
   QUICK_LINK_STORAGE_KEY,
   BOOKMARKS_STORAGE_KEY,
   START_PAGE_BG_STORAGE_KEY,
+  BACKEND_URL_STORAGE_KEY,
   defaultQuickLinks,
   NAVBAR_HIDE_OFFSET,
   EXTRACT_CONTENT_SCRIPT
@@ -87,6 +88,7 @@ export default function SimpleBrowser() {
   const [ragflowBaseUrl, setRagflowBaseUrl] = useState<string>('');
   const [openaiApiKey, setOpenaiApiKey] = useState<string>('');
   const [openaiBaseUrl, setOpenaiBaseUrl] = useState<string>('');
+  const [backendUrl, setBackendUrl] = useState<string>('http://192.168.1.9:8080');
   const [selectedProvider, setSelectedProvider] = useState<'siliconflow' | 'ragflow' | 'openai'>('siliconflow');
   const [isSettingsPanelVisible, setSettingsPanelVisible] = useState(false);
   
@@ -145,6 +147,12 @@ export default function SimpleBrowser() {
         const provider = await AsyncStorage.getItem(SELECTED_PROVIDER_STORAGE_KEY);
         if (provider === 'siliconflow' || provider === 'ragflow' || provider === 'openai') {
           setSelectedProvider(provider);
+        }
+        
+        const savedBackendUrl = await AsyncStorage.getItem(BACKEND_URL_STORAGE_KEY);
+        if (savedBackendUrl) {
+          setBackendUrl(savedBackendUrl);
+          setServiceBackendUrl(savedBackendUrl);
         }
       } catch (e) {
         console.warn('Failed to load settings', e);
@@ -373,6 +381,16 @@ export default function SimpleBrowser() {
       setSelectedProvider(provider);
     } catch (e) {
       console.warn('Failed to save provider', e);
+    }
+  };
+  
+  const handleSaveBackendUrl = async (url: string) => {
+    try {
+      await AsyncStorage.setItem(BACKEND_URL_STORAGE_KEY, url);
+      setBackendUrl(url);
+      setServiceBackendUrl(url);
+    } catch (e) {
+      Alert.alert('保存失败', '无法保存后端地址');
     }
   };
   
@@ -1266,10 +1284,12 @@ export default function SimpleBrowser() {
           ragflowBaseUrl={ragflowBaseUrl}
           openaiApiKey={openaiApiKey}
           openaiBaseUrl={openaiBaseUrl}
+          backendUrl={backendUrl}
           selectedProvider={selectedProvider}
           onSave={handleSaveApiKey}
           onSaveRagflow={handleSaveRagflowConfig}
           onSaveOpenAI={handleSaveOpenAIConfig}
+          onSaveBackendUrl={handleSaveBackendUrl}
           onModelChange={handleSaveModel}
           onProviderChange={handleProviderChange}
           onDismiss={() => setSettingsPanelVisible(false)}

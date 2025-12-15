@@ -23,10 +23,12 @@ type SettingsPanelProps = {
   ragflowBaseUrl: string;
   openaiApiKey: string;
   openaiBaseUrl: string;
+  backendUrl: string;
   selectedProvider: 'siliconflow' | 'ragflow' | 'openai';
   onSave: (key: string) => void;
   onSaveRagflow: (key: string, url: string) => void;
   onSaveOpenAI: (key: string, url: string) => void;
+  onSaveBackendUrl: (url: string) => void;
   onModelChange: (model: string) => void;
   onProviderChange: (provider: 'siliconflow' | 'ragflow' | 'openai') => void;
   onDismiss: () => void;
@@ -40,21 +42,24 @@ export function SettingsPanel({
   ragflowBaseUrl,
   openaiApiKey,
   openaiBaseUrl,
+  backendUrl,
   selectedProvider,
   onSave,
   onSaveRagflow,
   onSaveOpenAI,
+  onSaveBackendUrl,
   onModelChange,
   onProviderChange,
   onDismiss,
   isDark,
 }: SettingsPanelProps) {
-  const [currentView, setCurrentView] = useState<'main' | 'siliconflow' | 'ragflow' | 'openai'>('main');
+  const [currentView, setCurrentView] = useState<'main' | 'siliconflow' | 'ragflow' | 'openai' | 'backend'>('main');
   const [inputValue, setInputValue] = useState(apiKey);
   const [ragKeyInput, setRagKeyInput] = useState(ragflowApiKey);
   const [ragUrlInput, setRagUrlInput] = useState(ragflowBaseUrl);
   const [openaiKeyInput, setOpenaiKeyInput] = useState(openaiApiKey);
   const [openaiUrlInput, setOpenaiUrlInput] = useState(openaiBaseUrl);
+  const [backendUrlInput, setBackendUrlInput] = useState(backendUrl);
   
   const handleSaveSiliconFlow = () => {
     if (!inputValue.trim()) {
@@ -78,6 +83,16 @@ export function SettingsPanel({
       return;
     }
     onSaveOpenAI(openaiKeyInput.trim(), openaiUrlInput.trim());
+  };
+
+  const handleSaveBackendUrl = () => {
+    if (!backendUrlInput.trim()) {
+      Alert.alert('提示', '请输入后端地址');
+      return;
+    }
+    onSaveBackendUrl(backendUrlInput.trim());
+    Alert.alert('成功', '后端地址已保存');
+    setCurrentView('main');
   };
 
   const renderMainView = () => (
@@ -171,6 +186,60 @@ export function SettingsPanel({
         </View>
         <Ionicons name="chevron-forward" size={20} color={isDark ? '#64748b' : '#94a3b8'} />
       </Pressable>
+
+      <ThemedText style={[styles.settingSectionTitle, { marginTop: 24 }]}>系统设置</ThemedText>
+      
+      <Pressable
+        style={[
+          styles.providerCard, 
+          isDark && styles.providerCardDark,
+        ]}
+        onPress={() => setCurrentView('backend')}
+      >
+        <View style={[styles.providerIconContainer, { backgroundColor: '#fef3c7' }]}>
+          <Ionicons name="server-outline" size={24} color="#f59e0b" />
+        </View>
+        <View style={styles.providerInfo}>
+          <ThemedText style={styles.providerName}>后端服务地址</ThemedText>
+          <ThemedText style={styles.providerDesc}>
+            {backendUrl || '未配置'}
+          </ThemedText>
+        </View>
+        <Ionicons name="chevron-forward" size={20} color={isDark ? '#64748b' : '#94a3b8'} />
+      </Pressable>
+    </ScrollView>
+  );
+
+  const renderBackendView = () => (
+    <ScrollView 
+      style={{ flex: 1 }}
+      contentContainerStyle={[styles.settingsContent, { paddingBottom: 100 }]} 
+      showsVerticalScrollIndicator={false}
+      keyboardDismissMode="on-drag"
+    >
+      <View style={styles.settingItem}>
+        <ThemedText style={styles.settingLabel}>后端服务地址</ThemedText>
+        <TextInput
+          style={[
+            styles.settingInput,
+            isDark && styles.settingInputDark,
+          ]}
+          value={backendUrlInput}
+          onChangeText={setBackendUrlInput}
+          placeholder="例如: http://192.168.1.9:8080"
+          placeholderTextColor={isDark ? '#64748b' : '#94a3b8'}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+        <ThemedText style={styles.settingHint}>
+          iOS 模拟器: http://localhost:8080{'\n'}
+          真机运行: http://你的电脑IP:8080{'\n'}
+          例如: http://192.168.1.9:8080
+        </ThemedText>
+        <ThemedText style={[styles.settingHint, { marginTop: 12, color: '#f59e0b' }]}>
+          ⚠️ IP 地址变化后请在此更新，无需重新编译应用
+        </ThemedText>
+      </View>
     </ScrollView>
   );
 
@@ -372,7 +441,7 @@ export function SettingsPanel({
             )}
             
             <ThemedText style={styles.bookmarksTitle}>
-              {currentView === 'main' ? '设置' : (currentView === 'siliconflow' ? '硅基流动' : (currentView === 'ragflow' ? 'RAGFlow' : 'OpenAI 后端'))}
+              {currentView === 'main' ? '设置' : (currentView === 'siliconflow' ? '硅基流动' : (currentView === 'ragflow' ? 'RAGFlow' : (currentView === 'openai' ? 'OpenAI 后端' : '后端服务')))}
             </ThemedText>
             
             {currentView === 'siliconflow' ? (
@@ -387,12 +456,16 @@ export function SettingsPanel({
               <Pressable onPress={handleSaveOpenAI} style={styles.bookmarksDoneButton}>
                 <ThemedText style={[styles.bookmarksDoneText, { color: '#007AFF' }]}>保存</ThemedText>
               </Pressable>
+            ) : currentView === 'backend' ? (
+              <Pressable onPress={handleSaveBackendUrl} style={styles.bookmarksDoneButton}>
+                <ThemedText style={[styles.bookmarksDoneText, { color: '#007AFF' }]}>保存</ThemedText>
+              </Pressable>
             ) : (
               <View style={styles.bookmarksDoneButton} />
             )}
           </View>
           
-          {currentView === 'main' ? renderMainView() : (currentView === 'siliconflow' ? renderSiliconFlowView() : (currentView === 'ragflow' ? renderRagflowView() : renderOpenAIView()))}
+          {currentView === 'main' ? renderMainView() : (currentView === 'siliconflow' ? renderSiliconFlowView() : (currentView === 'ragflow' ? renderRagflowView() : (currentView === 'openai' ? renderOpenAIView() : renderBackendView())))}
         </View>
       </KeyboardAvoidingView>
     </View>

@@ -9,6 +9,7 @@ export const START_PAGE_MARKER = 'about:start';
 export const QUICK_LINK_STORAGE_KEY = 'browser.customQuickLinks.v1';
 export const BOOKMARKS_STORAGE_KEY = 'browser.bookmarks.v1';
 export const START_PAGE_BG_STORAGE_KEY = 'browser.startPageBgImage.v1';
+export const BACKEND_URL_STORAGE_KEY = 'browser.backend.url.v1';
 
 // 预设的快捷链接列表
 export const defaultQuickLinks: QuickLink[] = [

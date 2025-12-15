@@ -2,14 +2,27 @@
  * 网页总结服务 - 调用 Java 后端
  * 
  * 注意：
- * 1. 如果在 iOS 模拟器运行，可以使用 'http://localhost:8080/summarise'
- * 2. 如果在真机运行，请将 localhost 替换为电脑的局域网 IP 地址 (例如 'http://192.168.1.5:8080/summarise')
+ * 1. 如果在 iOS 模拟器运行，可以使用 'http://localhost:8080'
+ * 2. 如果在真机运行，请在设置中配置电脑的局域网 IP 地址 (例如 'http://192.168.1.9:8080')
  * 3. 请确保 Java 后端服务已启动 (运行 ./run_server.sh)
  */
 
-// 请根据运行环境修改此处 IP
-export const API_BASE_URL = 'http://192.168.1.8:8080';
-const BACKEND_URL = `${API_BASE_URL}/summarise`;
+// 默认后端地址（可在设置中修改）
+export let API_BASE_URL = 'http://192.168.1.9:8080';
+
+/**
+ * 设置后端地址
+ */
+export function setBackendUrl(url: string) {
+  API_BASE_URL = url.endsWith('/') ? url.slice(0, -1) : url;
+}
+
+/**
+ * 获取当前后端地址
+ */
+export function getBackendUrl(): string {
+  return API_BASE_URL;
+}
 
 export interface SummariseRequest {
   content: string;
@@ -34,7 +47,8 @@ export async function summarisePage(
   url?: string
 ): Promise<string> {
   try {
-    const response = await fetch(BACKEND_URL, {
+    const backendUrl = `${API_BASE_URL}/summarise`;
+    const response = await fetch(backendUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
